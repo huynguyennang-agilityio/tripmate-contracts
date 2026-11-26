@@ -6,7 +6,7 @@
 **Machine:** Mac 1\
 **Spec:** [EPIC-11 spec](https://github.com/huynguyennang-agilityio/tripmate-docs/blob/main/docs/specs/epic-11/spec.md)\
 **Status:** Proposed\
-**Version:** 1.1
+**Version:** 1.2
 
 The tasks of EPIC-11 in this repository, in the order they start. Each task holds everything its Trello card will say ([development-flow.md](https://github.com/huynguyennang-agilityio/tripmate-docs/blob/main/docs/development-flow.md), section 1). The behaviour, the design, the order of the cards across repositories, and the checkpoints are in the spec, section 6.
 
@@ -42,7 +42,8 @@ Test case levels are the letters of [test-strategy.md](https://github.com/huyngu
 - `CLAUDE.md`, `.gitattributes`, and the four agent roles (4.3).
 - The checks of this repository are Node 24 scripts, tested with Vitest; ICU messages are read with `@formatjs/icu-messageformat-parser`, the parser `next-intl` uses on Web.
 - A translation file is one flat JSON object; every key starts with the file's area, for example `auth.not_signed_in` in `translations/vi/auth.json`. A key in the file of another area fails the check.
-- The path list: `openapi.json`, `events.schema.json`, CI, the checks, `CLAUDE.md`, the agent roles, and the dependencies are High; `translations/**` is Low.
+- The path list: `openapi.json`, `events.schema.json`, CI, the checks, `CLAUDE.md`, the agent roles, and the dependencies are High; `translations/**`, and as in the backend `tests/**`, `tasks/**`, `README.md`, and `.gitignore`, are Low.
+- Inside a plural or selectordinal, `{n}` of its own argument counts the same as `#`: `{n, plural, other {{n} items}}` and `{n, plural, other {# mục}}` have the same placeholders.
 
 **Leaves out**
 
@@ -116,3 +117,4 @@ None.
 |---------|------|---------|
 | 1.0 | 2026-11-25 | First version: the 2 tasks of EPIC-11 in this repository, moved from the EPIC-11 spec, sections 6 and 7, with scope, what each leaves out, the reason for its risk level, and its manual checks. The skeleton tasks write four agent roles, as development-flow.md now says. |
 | 1.1 | 2026-11-26 | CT1 scope, as the product owner decided before the tests: the checks are Node 24 scripts with Vitest and the `next-intl` ICU parser; flat translation keys that start with the file's area; `translations/**` is Low on the path list. |
+| 1.2 | 2026-11-26 | CT1 scope, as the product owner decided after review round 1: `tests/**`, `tasks/**`, `README.md`, and `.gitignore` are Low as in the backend; `{n}` inside its own plural counts as `#`. |
