@@ -2,7 +2,7 @@
 // The interface these tests rely on is in tests/INTERFACE.md.
 import { describe, test, expect, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -23,14 +23,20 @@ function runCli(args, cwd = repoRoot, script = scriptPath) {
 }
 
 const tmpDirs = [];
+// A temporary directory with its real path: on macOS the default temp folder is a symlink
+// (/var -> /private/var), and a path relative to it would point to the wrong place.
+function makeTempDir(prefix) {
+  const dir = realpathSync.native(mkdtempSync(path.join(tmpdir(), prefix)));
+  tmpDirs.push(dir);
+  return dir;
+}
 afterEach(() => {
   while (tmpDirs.length) rmSync(tmpDirs.pop(), { recursive: true, force: true });
 });
 
 // files: { "en/auth.json": { "auth.x": "..." }, ... }; a string value is written as is.
 function makeTranslations(files) {
-  const dir = mkdtempSync(path.join(tmpdir(), "ct1-translations-"));
-  tmpDirs.push(dir);
+  const dir = makeTempDir("ct1-translations-");
   for (const [rel, content] of Object.entries(files)) {
     const file = path.join(dir, ...rel.split("/"));
     mkdirSync(path.dirname(file), { recursive: true });
@@ -118,8 +124,7 @@ describe("CT1 translation check", () => {
     expect(osCli.status, osCli.output).toBe(0);
 
     // The command works from another working directory, with a relative script path.
-    const otherCwd = mkdtempSync(path.join(tmpdir(), "ct1-cwd-"));
-    tmpDirs.push(otherCwd);
+    const otherCwd = makeTempDir("ct1-cwd-");
     const relScript = path.relative(otherCwd, scriptPath);
     expect(path.isAbsolute(relScript)).toBe(false);
     const relCli = runCli([dir], otherCwd, relScript);
