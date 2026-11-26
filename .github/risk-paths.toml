@@ -1,0 +1,77 @@
+# Path list of the risk gate (EPIC-11 spec, section 2.12; development-flow.md, section 2.1).
+#
+# A changed path's level is the highest level of the rules that match it. A path no rule matches
+# counts as High. The flow checks also treat this file, `.github/workflows/**`, every `CLAUDE.md`,
+# and `.claude/agents/**` as High, whatever it says.
+#
+# Globs are matched from the repository root: `*` stays in one folder, `**` crosses folders.
+
+[[rule]]
+glob = "openapi.json"
+level = "High"
+reason = "The REST contract every client builds on"
+
+[[rule]]
+glob = "events.schema.json"
+level = "High"
+reason = "The realtime message and event schemas"
+
+[[rule]]
+glob = ".github/**"
+level = "High"
+reason = "CI, the flow checks, and this path list"
+
+[[rule]]
+glob = "scripts/**"
+level = "High"
+reason = "The checks of this repository"
+
+[[rule]]
+glob = "**/CLAUDE.md"
+level = "High"
+reason = "Rules every agent follows"
+
+[[rule]]
+glob = ".claude/**"
+level = "High"
+reason = "Agent roles and settings"
+
+[[rule]]
+glob = "package.json"
+level = "High"
+reason = "Dependencies and scripts"
+
+[[rule]]
+glob = "package-lock.json"
+level = "High"
+reason = "Locked dependencies"
+
+[[rule]]
+glob = ".gitattributes"
+level = "High"
+reason = "Line endings the checks compare"
+
+[[rule]]
+glob = "translations/**"
+level = "Low"
+reason = "Interface texts; the translation check guards them"
+
+[[rule]]
+glob = "tests/**"
+level = "Low"
+reason = "Tests are locked by the test-lock check"
+
+[[rule]]
+glob = "tasks/**"
+level = "Low"
+reason = "Task files"
+
+[[rule]]
+glob = "README.md"
+level = "Low"
+reason = "Documentation"
+
+[[rule]]
+glob = ".gitignore"
+level = "Low"
+reason = "Ignored files"

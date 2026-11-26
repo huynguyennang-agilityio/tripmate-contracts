@@ -1,0 +1,18 @@
+{
+  "name": "tripmate-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TripMate contracts: the REST contract, the event schema, and the shared translations, with their checks",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=24.2 <25"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@formatjs/icu-messageformat-parser": "3.5.23",
+    "vitest": "5.1.1"
+  }
+}

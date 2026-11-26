@@ -1,0 +1,35 @@
+# Three of the four flow checks on every pull request to `main` (EPIC-11 spec, section 2.12):
+# `flow / failing-first`, `flow / test-lock`, and `flow / mutation` (skipped here, so green). They
+# run the pull request's own tests, so they run on `pull_request`. The fourth, the risk gate, is
+# `gate / risk-gate` from `risk-gate.yml` (`pull_request_target`), which a pull request cannot
+# change. Require on `main`: `flow / failing-first`, `flow / test-lock`, `gate / risk-gate`.
+# The checks' code is the backend's `flowchecks` package, pinned to a full commit SHA of
+# tripmate-backend (the header of its flow-checks.yml explains why other repositories pin).
+# Moving the pin is a normal pull request; it is High (`.github/**`).
+# `edited` runs the checks again when the description changes.
+name: Flow
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  flow:
+    uses: huynguyennang-agilityio/tripmate-backend/.github/workflows/flow-checks.yml@3f0e08d7d5442f0e968d220defbfdb740253aa61
+    with:
+      rules-file: .github/risk-paths.toml
+      test-command: npx vitest run
+      setup-command: npm ci
+      run-mutation: false
+      databases: false
+      run-risk-gate: false
+      flowchecks-repository: huynguyennang-agilityio/tripmate-backend
+      flowchecks-ref: 3f0e08d7d5442f0e968d220defbfdb740253aa61
