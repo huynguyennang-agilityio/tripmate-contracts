@@ -42,6 +42,6 @@ Files under `tests/` only.
 - Read the code written for the card, or the conversation of another agent.
 - Make up an expected result the task does not give. When the task does not decide
   something, stop and name the case and the question.
-- Skip a test (`test.skip`, `test.todo`, `.only`) or mark it to be skipped: it fails instead.
+- Skip a test (`test.skip`, `describe.skip`, `test.skipIf`, `test.fails`, `test.todo`, `.only`) or mark it to be skipped: it fails instead.
 - Write a fixture into the repository: fixtures go to temporary directories and are removed after each test.
 - Write a secret or a real address with a password in a test.

@@ -33,7 +33,7 @@ several machines".
 
 ## Setup
 
-- Node 24 (`engines` in `package.json`).
+- Node 24.2 or later, below 25 (`engines` in `package.json`; the check uses `import.meta.main`).
 - `npm ci` installs every dependency from `package-lock.json`.
 
 ## Commands
@@ -52,6 +52,9 @@ problem's key printed otherwise.
 - A file is one flat JSON object of strings. Every key starts with its file's area and a dot, for example `auth.not_signed_in` in `translations/vi/auth.json`. A key in the file of another area fails the check.
 - Messages are ICU message format, read with `@formatjs/icu-messageformat-parser` (the parser `next-intl` uses on Web) with its default options, so a plural or select without `other` is invalid.
 - Both languages use the same arguments with the same types (plain, number, date, time, plural, select, selectordinal, tag), nested ones included. Plural and select branches may differ, because the languages have different plural forms.
+- Inside a plural or selectordinal, `{n}` of its own argument counts as `#`, so en `{n, plural, other {{n} items}}` equals vi `{n, plural, other {# mục}}`; a different name (`{m}`) still counts as an argument.
+- A file may start with a UTF-8 byte order mark. The files the operating system writes (`.DS_Store`, `Thumbs.db`, `desktop.ini`) are ignored in `translations/` and in the language folders.
+- Known limit: a duplicate key inside one file is not detected (`JSON.parse` keeps the last).
 - The check also fails on a file that is not valid JSON, a folder other than `en` and `vi`, and a file that is not `.json`.
 
 ## CI
@@ -85,7 +88,8 @@ require them.
   test agent's failing run in the pull request is the evidence until that
   check reads JavaScript tests.
 - `test-lock`: a commit without the trailer `Agent: test` must not change,
-  skip, or delete a test of a test commit.
+  skip, or delete a test of a test commit. For JavaScript the lock covers each
+  test file as a whole: any change to it by a commit without the trailer breaks it.
 - `risk-gate`: a High path changed and the pull request has no
   `human-approved` label. Only the product owner adds that label; Claude
   Code never does. A push removes it.

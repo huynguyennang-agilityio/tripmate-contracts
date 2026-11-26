@@ -1,19 +1,21 @@
 // The translation check (EPIC-11 spec, section 2.9). Library and command:
 //   checkTranslations(dir) -> { problems: [{ key, message, lang?, file? }] }
 //   node scripts/check-translations.js [dir]   (dir defaults to "translations")
-import { readdir, readFile, realpath } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { parse, TYPE } from "@formatjs/icu-messageformat-parser";
 
 const LANGS = ["en", "vi"];
+// Files the operating system writes; ignored in the translations folder and in language folders.
+const OS_FILES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
 
 // The set of "name:type" for every argument of a parsed message, branches and tags included.
-function placeholders(elements, found = new Set()) {
+// Inside a plural or selectordinal, {n} of its own argument counts as # (task 1.2), so it is skipped.
+function placeholders(elements, found = new Set(), own = new Set()) {
   for (const el of elements) {
     switch (el.type) {
       case TYPE.argument:
-        found.add(`${el.value}:argument`);
+        if (!own.has(el.value)) found.add(`${el.value}:argument`);
         break;
       case TYPE.number:
         found.add(`${el.value}:number`);
@@ -26,15 +28,17 @@ function placeholders(elements, found = new Set()) {
         break;
       case TYPE.select:
         found.add(`${el.value}:select`);
-        for (const option of Object.values(el.options)) placeholders(option.value, found);
+        for (const option of Object.values(el.options)) placeholders(option.value, found, own);
         break;
       case TYPE.plural:
         found.add(`${el.value}:${el.pluralType === "ordinal" ? "selectordinal" : "plural"}`);
-        for (const option of Object.values(el.options)) placeholders(option.value, found);
+        for (const option of Object.values(el.options)) {
+          placeholders(option.value, found, new Set([...own, el.value]));
+        }
         break;
       case TYPE.tag:
         found.add(`${el.value}:tag`);
-        placeholders(el.children, found);
+        placeholders(el.children, found, own);
         break;
       default:
         break; // literal, pound
@@ -43,6 +47,11 @@ function placeholders(elements, found = new Set()) {
   return found;
 }
 
+const where = (error) => {
+  const start = error?.location?.start;
+  return start ? ` at ${start.line}:${start.column}` : "";
+};
+
 const sortedList = (set) => [...set].sort().join(", ");
 
 async function listDir(dir) {
@@ -50,6 +59,7 @@ async function listDir(dir) {
     return await readdir(dir, { withFileTypes: true });
   } catch (error) {
     if (error.code === "ENOENT") return null;
+    if (error.code === "ENOTDIR") return "not-a-folder";
     throw error;
   }
 }
@@ -58,11 +68,13 @@ export async function checkTranslations(dir) {
   const problems = [];
   const add = (problem) => problems.push(problem);
 
-  const top = await listDir(dir);
-  if (top === null) {
-    add({ key: null, message: `The translations folder ${dir} does not exist`, file: "." });
+  const topAll = await listDir(dir);
+  if (topAll === null || topAll === "not-a-folder") {
+    const what = topAll === null ? "does not exist" : "is a file, not a folder";
+    add({ key: null, message: `The translations folder ${dir} ${what}`, file: "." });
     return { problems };
   }
+  const top = topAll.filter((entry) => !OS_FILES.has(entry.name));
 
   for (const entry of top) {
     if (entry.isDirectory()) {
@@ -78,11 +90,12 @@ export async function checkTranslations(dir) {
   const byLang = Object.fromEntries(LANGS.map((lang) => [lang, new Map()]));
 
   for (const lang of LANGS) {
-    const entries = await listDir(path.join(dir, lang));
-    if (entries === null) {
+    const all = await listDir(path.join(dir, lang));
+    if (all === null || all === "not-a-folder") {
       add({ key: null, message: `The folder ${lang} is missing`, lang, file: lang });
       continue;
     }
+    const entries = all.filter((entry) => !OS_FILES.has(entry.name));
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       const rel = `${lang}/${entry.name}`;
       if (entry.isDirectory()) {
@@ -96,7 +109,7 @@ export async function checkTranslations(dir) {
       const area = entry.name.slice(0, -".json".length);
       let data;
       try {
-        data = JSON.parse(await readFile(path.join(dir, lang, entry.name), "utf8"));
+        data = JSON.parse((await readFile(path.join(dir, lang, entry.name), "utf8")).replace(/^\uFEFF/, ""));
       } catch (error) {
         add({ key: null, message: `${rel} is not valid JSON: ${error.message}`, lang, file: rel });
         continue;
@@ -121,19 +134,23 @@ export async function checkTranslations(dir) {
   }
 
   // The occurrence to judge: the one in the file of the key's area, else the first.
-  const pick = (list) => list.find((o) => o.file.endsWith(`/${o.area}.json`)) ?? list[0];
+  const inArea = (key, o) => key.startsWith(`${o.area}.`);
+  const pick = (key, list) => list.find((o) => inArea(key, o)) ?? list[0];
   const parsed = { en: new Map(), vi: new Map() };
 
   for (const lang of LANGS) {
     for (const [key, list] of byLang[lang]) {
+      const chosen = pick(key, list);
       for (const occurrence of list) {
+        // A wrong-area copy is reported as wrong-area only, unless it is the only copy.
+        if (occurrence !== chosen && !inArea(key, occurrence)) continue;
         try {
           const ast = parse(occurrence.message);
-          if (occurrence === pick(list)) parsed[lang].set(key, placeholders(ast));
+          if (occurrence === chosen) parsed[lang].set(key, placeholders(ast));
         } catch (error) {
           add({
             key,
-            message: `${occurrence.file}: invalid ICU message: ${error.message ?? error.kind ?? error}`,
+            message: `${occurrence.file}: invalid ICU message${where(error)}: ${error.message ?? error.kind ?? error}`,
             lang,
             file: occurrence.file,
           });
@@ -161,7 +178,7 @@ export async function checkTranslations(dir) {
       add({
         key,
         message: `Different placeholders in en and vi: en has [${enText}], vi has [${viText}]`,
-        file: pick(byLang.en.get(key)).file,
+        file: pick(key, byLang.en.get(key)).file,
       });
     }
   }
@@ -183,7 +200,6 @@ async function main() {
   return 1;
 }
 
-const invoked = process.argv[1] && import.meta.url === pathToFileURL(await realpath(process.argv[1])).href;
-if (invoked) {
+if (import.meta.main) {
   process.exitCode = await main();
 }
