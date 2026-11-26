@@ -2,7 +2,7 @@
 // The interface these tests rely on is in tests/INTERFACE.md.
 import { describe, test, expect, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,14 +27,14 @@ afterEach(() => {
   while (tmpDirs.length) rmSync(tmpDirs.pop(), { recursive: true, force: true });
 });
 
-// files: { "en/auth.json": { "auth.x": "..." }, ... }
+// files: { "en/auth.json": { "auth.x": "..." }, ... }; a string value is written as is.
 function makeTranslations(files) {
   const dir = mkdtempSync(path.join(tmpdir(), "ct1-translations-"));
   tmpDirs.push(dir);
   for (const [rel, content] of Object.entries(files)) {
     const file = path.join(dir, ...rel.split("/"));
     mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, JSON.stringify(content, null, 2), "utf8");
+    writeFileSync(file, typeof content === "string" ? content : JSON.stringify(content, null, 2), "utf8");
   }
   return dir;
 }
@@ -47,6 +47,7 @@ async function check(dir) {
 }
 
 const keysOf = (problems) => new Set(problems.map((p) => p.key));
+const namesFile = (problems, name) => problems.some((p) => `${p.file ?? ""} ${p.message ?? ""}`.includes(name));
 
 const cleanFiles = {
   "en/auth.json": {
@@ -91,6 +92,17 @@ describe("CT1 translation check", () => {
     expect(await check(ownDir)).toEqual([]);
     const ownCli = runCli([]);
     expect(ownCli.status, ownCli.output).toBe(0);
+
+    // CI's translations job runs the tests and the check (CLAUDE.md, section CI).
+    const ci = readFileSync(path.join(repoRoot, ".github", "workflows", "ci.yml"), "utf8");
+    const jobs = ci.slice(ci.search(/^jobs:\s*$/m));
+    const start = jobs.search(/^  translations:\s*$/m);
+    expect(start, "ci.yml has a translations job").toBeGreaterThanOrEqual(0);
+    const rest = jobs.slice(start + 1);
+    const next = rest.search(/^  \S/m);
+    const job = next === -1 ? rest : rest.slice(0, next);
+    expect(job).toMatch(/^\s*(- )?run:\s*npm test\s*$/m);
+    expect(job).toMatch(/^\s*(- )?run:\s*node scripts\/check-translations\.js\s*$/m);
   });
 
   test("CT1-2 a key in one language only, or in the file of another area, fails the check and names the key", async () => {
@@ -131,6 +143,60 @@ describe("CT1 translation check", () => {
     for (const key of ["auth.only_in_en", "auth.only_in_vi", "budget.title", "trip.wrong_area"]) {
       expect(cli.output).toContain(key);
     }
+
+    // One flat JSON object of strings: a nested object and a number are each reported by key.
+    // The area prefix needs its dot: authx.title is not in area auth.
+    const shapeDir = makeTranslations({
+      "en/auth.json": {
+        "auth.ok": "Fine.",
+        "auth.nested": { "inner": "Nested." },
+        "auth.number": 3,
+        "authx.title": "Wrong area.",
+      },
+      "vi/auth.json": {
+        "auth.ok": "Ổn.",
+        "auth.nested": { "inner": "Lồng nhau." },
+        "auth.number": 3,
+        "authx.title": "Sai khu vực.",
+      },
+    });
+    const shapeProblems = await check(shapeDir);
+    const shapeKeys = keysOf(shapeProblems);
+    expect(shapeKeys).toContain("auth.nested");
+    expect(shapeKeys).toContain("auth.number");
+    expect(shapeKeys).toContain("authx.title");
+    expect(shapeKeys).not.toContain("auth.ok");
+    expect(namesFile(shapeProblems.filter((p) => p.key === "authx.title"), "auth.json"), JSON.stringify(shapeProblems)).toBe(true);
+    const shapeCli = runCli([shapeDir]);
+    expect(shapeCli.status).not.toBe(0);
+    for (const key of ["auth.nested", "auth.number", "authx.title"]) expect(shapeCli.output).toContain(key);
+
+    // Files and folders the check fails on (CLAUDE.md, section Translations); key may be null.
+    const clean = {
+      "en/auth.json": { "auth.ok": "Fine." },
+      "vi/auth.json": { "auth.ok": "Ổn." },
+    };
+    const conflict = '{\n<<<<<<< HEAD\n  "trip.title": "Trip"\n=======\n  "trip.title": "Trips"\n>>>>>>> other\n}\n';
+    const layoutCases = [
+      ["a file that is not valid JSON", { "en/trip.json": conflict, "vi/trip.json": conflict }, "trip.json"],
+      ["a folder other than en and vi", { "fr/auth.json": { "auth.ok": "Bien." } }, "fr"],
+      ["a file that is not .json", { "en/notes.txt": "notes", "vi/notes.txt": "ghi chú" }, "notes.txt"],
+    ];
+    for (const [what, extra, name] of layoutCases) {
+      const layoutDir = makeTranslations({ ...clean, ...extra });
+      const layoutProblems = await check(layoutDir);
+      expect(layoutProblems.length, what).toBeGreaterThan(0);
+      expect(namesFile(layoutProblems, name), `${what}: ${JSON.stringify(layoutProblems)}`).toBe(true);
+      for (const p of layoutProblems) expect(typeof p.message, what).toBe("string");
+      const layoutCli = runCli([layoutDir]);
+      expect(layoutCli.status, what).not.toBe(0);
+      expect(layoutCli.output, what).toContain(name);
+    }
+
+    // A missing language folder: only en/ is present.
+    const onlyEnDir = makeTranslations({ "en/auth.json": { "auth.ok": "Fine." } });
+    expect((await check(onlyEnDir)).length, "only en/ present").toBeGreaterThan(0);
+    expect(runCli([onlyEnDir]).status, "only en/ present").not.toBe(0);
   });
 
   test("CT1-3 a message with broken ICU syntax fails the check and names the key", async () => {
@@ -167,6 +233,13 @@ describe("CT1 translation check", () => {
         "trip.nested": "{count, plural, one {{owner} has # trip} other {{owner} has # trips}}",
         "trip.tag": "Read the <link>terms</link>.",
         "trip.same": "{count, plural, one {# day left} other {# days left}}",
+        "trip.vi_only_arg": "Hello!",
+        "trip.number": "{amount, number}",
+        "trip.date_time": "{d, date}",
+        "trip.ordinal": "{n, selectordinal, other {#}}",
+        "trip.select": "{r, select, other {x}}",
+        "trip.in_tag": "<b>{name}</b>",
+        "trip.case": "{Name}",
       },
       "vi/trip.json": {
         "trip.renamed": "Xin chào {full_name}!",
@@ -174,6 +247,13 @@ describe("CT1 translation check", () => {
         "trip.nested": "{count, plural, other {{leader} có # chuyến đi}}",
         "trip.tag": "Đọc điều khoản.",
         "trip.same": "Còn {count, plural, other {# ngày}}",
+        "trip.vi_only_arg": "Xin chào {name}!",
+        "trip.number": "{amount}",
+        "trip.date_time": "{d, time}",
+        "trip.ordinal": "{n, plural, other {#}}",
+        "trip.select": "{r, plural, other {x}}",
+        "trip.in_tag": "<b>{ten}</b>",
+        "trip.case": "{name}",
       },
     });
 
@@ -183,11 +263,22 @@ describe("CT1 translation check", () => {
     expect(keys).toContain("trip.retyped"); // plural vs plain argument
     expect(keys).toContain("trip.nested"); // argument inside a branch renamed
     expect(keys).toContain("trip.tag"); // a tag in en only
+    expect(keys).toContain("trip.vi_only_arg"); // a placeholder in vi only
+    expect(keys).toContain("trip.number"); // number vs plain argument
+    expect(keys).toContain("trip.date_time"); // date vs time
+    expect(keys).toContain("trip.ordinal"); // selectordinal vs plural
+    expect(keys).toContain("trip.select"); // select vs plural
+    expect(keys).toContain("trip.in_tag"); // argument inside a tag renamed
+    expect(keys).toContain("trip.case"); // names are case-sensitive
     expect(keys).not.toContain("trip.same"); // branches differ, arguments match
 
+    const failing = [
+      "trip.renamed", "trip.retyped", "trip.nested", "trip.tag", "trip.vi_only_arg", "trip.number",
+      "trip.date_time", "trip.ordinal", "trip.select", "trip.in_tag", "trip.case",
+    ];
     const cli = runCli([dir]);
     expect(cli.status).not.toBe(0);
-    for (const key of ["trip.renamed", "trip.retyped", "trip.nested", "trip.tag"]) {
+    for (const key of failing) {
       expect(cli.output).toContain(key);
     }
 
