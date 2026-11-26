@@ -4,7 +4,7 @@ What the tests need from the code, and nothing more, card by card:
 
 - CT1 Contracts repository and translation check: from the EPIC-11
   spec, section 2.9, api-design.md, section 6, architecture.md,
-  section 7, and the task's scope, version 1.1 (cases CT1-1 to CT1-4),
+  section 7, and the task's scope, version 1.2 (cases CT1-1 to CT1-4),
   in the sections whose names start with "CT1".
 
 ## Running the tests
@@ -26,7 +26,11 @@ What the tests need from the code, and nothing more, card by card:
   without `.json`, and its dot, for example `auth.not_signed_in` in
   `translations/vi/auth.json` (`authx.title` there is in the wrong area).
 - `translations/` holds only the folders `en` and `vi`, both present,
-  and they hold only `.json` files.
+  and they hold only `.json` files. Files the operating system writes,
+  `.DS_Store`, `Thumbs.db`, and `desktop.ini`, in `translations/` or in
+  a language folder, are ignored (review round 1).
+- A file may start with a UTF-8 byte order mark; it is read as the JSON
+  after it (review round 1).
 - The repository's own `translations/en/` and `translations/vi/` exist,
   hold at least one area file, and pass the check (CT1-1).
 
@@ -56,12 +60,12 @@ file), when:
 | Case | Problem |
 |------|---------|
 | CT1-2 | The key is in one language only, including every key of a file that exists in one language only |
-| CT1-2 | The key does not start with its file's area and a dot; the problem names that file (in `file` or in `message`) |
+| CT1-2 | The key does not start with its file's area and a dot; the problem names that file (in `file` or in `message`). That copy is not compared with the key's copy in its own area: for `b.x` in `en/a.json`, with `b.x` also in `en/b.json` and `vi/b.json`, the wrong-area problem is the only problem for `b.x` (review round 1) |
 | CT1-2 | A value is not a string (a nested object, a number): the problem names the key |
 | CT1-2 | A file is not valid JSON (for example merge-conflict markers), a folder other than `en` and `vi`, or a file that is not `.json`: the problem names the file or folder (in `file` or in `message`); `key` may be `null` |
 | CT1-2 | A language folder is missing (for example only `en/` is present) |
 | CT1-3 | The message is not valid ICU for `@formatjs/icu-messageformat-parser` with its default options (so a plural or select without `other` is invalid) |
-| CT1-4 | The two languages do not have the same placeholders: the set of argument names, each with its type (plain argument, number, date, time, plural, select, selectordinal, tag), arguments nested inside branches and tags included. An argument in one language only, a different type (number vs plain, date vs time, selectordinal vs plural, select vs plural), or a different name (names are case-sensitive) is a problem. Plural and select branches may differ |
+| CT1-4 | The two languages do not have the same placeholders: the set of argument names, each with its type (plain argument, number, date, time, plural, select, selectordinal, tag), arguments nested inside branches and tags included. An argument in one language only, a different type (number vs plain, date vs time, selectordinal vs plural, select vs plural), or a different name (names are case-sensitive) is a problem. Plural and select branches may differ. Inside a plural or selectordinal, `{n}` of its own argument counts as `#` (task 1.2): `{n, plural, other {{n} items}}` and `{n, plural, other {# mục}}` match; `{m}` there is a different argument |
 
 ## CT1 The check as a command
 
@@ -69,10 +73,14 @@ file), when:
 node scripts/check-translations.js [dir]   # dir defaults to translations, from the working directory
 ```
 
+- The script path may be relative and the working directory any
+  directory; `dir` is resolved from the working directory.
 - Exit code 0 when there is no problem.
 - A non-zero exit code otherwise, with every problem's key printed to
   standard output or standard error (for a file or folder problem, the
   file or folder name).
+- A `dir` that does not exist is a problem: a non-zero exit code with
+  the directory's name printed, never exit 0 silently (review round 1).
 
 ## CT1 CI
 

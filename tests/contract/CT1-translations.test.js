@@ -17,8 +17,8 @@ async function loadCheck() {
   return mod.checkTranslations;
 }
 
-function runCli(args, cwd = repoRoot) {
-  const result = spawnSync(process.execPath, [scriptPath, ...args], { cwd, encoding: "utf8" });
+function runCli(args, cwd = repoRoot, script = scriptPath) {
+  const result = spawnSync(process.execPath, [script, ...args], { cwd, encoding: "utf8" });
   return { status: result.status, output: `${result.stdout ?? ""}${result.stderr ?? ""}` };
 }
 
@@ -103,6 +103,46 @@ describe("CT1 translation check", () => {
     const job = next === -1 ? rest : rest.slice(0, next);
     expect(job).toMatch(/^\s*(- )?run:\s*npm test\s*$/m);
     expect(job).toMatch(/^\s*(- )?run:\s*node scripts\/check-translations\.js\s*$/m);
+
+    // Files the operating system writes (.DS_Store, Thumbs.db, desktop.ini) are ignored,
+    // in translations/ and in a language folder (task 1.2, review round 1).
+    const osFiles = {};
+    for (const where of ["", "en/", "vi/"]) {
+      osFiles[`${where}.DS_Store`] = "\u0000\u0001binary";
+      osFiles[`${where}Thumbs.db`] = "\u0000\u0001binary";
+      osFiles[`${where}desktop.ini`] = "[.ShellClassInfo]\r\n";
+    }
+    const osDir = makeTranslations({ ...cleanFiles, ...osFiles });
+    expect(await check(osDir)).toEqual([]);
+    const osCli = runCli([osDir]);
+    expect(osCli.status, osCli.output).toBe(0);
+
+    // The command works from another working directory, with a relative script path.
+    const otherCwd = mkdtempSync(path.join(tmpdir(), "ct1-cwd-"));
+    tmpDirs.push(otherCwd);
+    const relScript = path.relative(otherCwd, scriptPath);
+    expect(path.isAbsolute(relScript)).toBe(false);
+    const relCli = runCli([dir], otherCwd, relScript);
+    expect(relCli.status, relCli.output).toBe(0);
+    const relBad = makeTranslations({ "en/auth.json": { "auth.only_in_en": "Only in English." }, "vi/auth.json": {} });
+    const relBadCli = runCli([relBad], otherCwd, relScript);
+    expect(relBadCli.status).not.toBe(0);
+    expect(relBadCli.output).toContain("auth.only_in_en");
+    // With no argument it reads translations/ of the working directory.
+    for (const [rel, content] of Object.entries(cleanFiles)) {
+      const file = path.join(otherCwd, "translations", ...rel.split("/"));
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, JSON.stringify(content, null, 2), "utf8");
+    }
+    const relDefault = runCli([], otherCwd, relScript);
+    expect(relDefault.status, relDefault.output).toBe(0);
+
+    // A directory that does not exist never passes silently.
+    const missing = runCli(["nonexistent"], repoRoot, path.join("scripts", "check-translations.js"));
+    expect(missing.status, missing.output).not.toBe(0);
+    expect(missing.status, missing.output).not.toBe(null);
+    expect(missing.output.trim().length, "a problem is printed").toBeGreaterThan(0);
+    expect(missing.output).toContain("nonexistent");
   });
 
   test("CT1-2 a key in one language only, or in the file of another area, fails the check and names the key", async () => {
@@ -193,6 +233,30 @@ describe("CT1 translation check", () => {
       expect(layoutCli.output, what).toContain(name);
     }
 
+    // A key in the wrong area is compared with the copy in its own area only (task 1.2,
+    // review round 1): b.x in en/a.json is reported as in the wrong area, naming a.json,
+    // and is not compared with vi/b.json for placeholders or presence.
+    const areaDir = makeTranslations({
+      "en/a.json": { "b.x": "{q}" },
+      "en/b.json": { "b.x": "{n}" },
+      "vi/b.json": { "b.x": "{n}" },
+    });
+    const bx = (await check(areaDir)).filter((p) => p.key === "b.x");
+    expect(bx.length, JSON.stringify(bx)).toBe(1);
+    expect(namesFile(bx, "a.json"), JSON.stringify(bx)).toBe(true);
+
+    // A file saved with a UTF-8 byte order mark is read as its JSON (task 1.2, review round 1).
+    const bom = "\uFEFF";
+    const bomDir = makeTranslations({
+      "en/auth.json": bom + JSON.stringify({ "auth.ok": "Fine.", "auth.hi": "Hi, {name}!" }, null, 2),
+      "vi/auth.json": JSON.stringify({ "auth.ok": "Ổn.", "auth.hi": "Chào {name}!" }, null, 2),
+      "en/trip.json": bom + JSON.stringify({ "trip.title": "Trip" }),
+      "vi/trip.json": bom + JSON.stringify({ "trip.title": "Chuyến đi" }),
+    });
+    expect(await check(bomDir)).toEqual([]);
+    const bomCli = runCli([bomDir]);
+    expect(bomCli.status, bomCli.output).toBe(0);
+
     // A missing language folder: only en/ is present.
     const onlyEnDir = makeTranslations({ "en/auth.json": { "auth.ok": "Fine." } });
     expect((await check(onlyEnDir)).length, "only en/ present").toBeGreaterThan(0);
@@ -240,6 +304,7 @@ describe("CT1 translation check", () => {
         "trip.select": "{r, select, other {x}}",
         "trip.in_tag": "<b>{name}</b>",
         "trip.case": "{Name}",
+        "trip.other_arg": "{n, plural, other {{m} items}}",
       },
       "vi/trip.json": {
         "trip.renamed": "Xin chào {full_name}!",
@@ -254,6 +319,7 @@ describe("CT1 translation check", () => {
         "trip.select": "{r, plural, other {x}}",
         "trip.in_tag": "<b>{ten}</b>",
         "trip.case": "{name}",
+        "trip.other_arg": "{n, plural, other {# mục}}",
       },
     });
 
@@ -270,11 +336,12 @@ describe("CT1 translation check", () => {
     expect(keys).toContain("trip.select"); // select vs plural
     expect(keys).toContain("trip.in_tag"); // argument inside a tag renamed
     expect(keys).toContain("trip.case"); // names are case-sensitive
+    expect(keys).toContain("trip.other_arg"); // {m} is not the plural's own argument
     expect(keys).not.toContain("trip.same"); // branches differ, arguments match
 
     const failing = [
       "trip.renamed", "trip.retyped", "trip.nested", "trip.tag", "trip.vi_only_arg", "trip.number",
-      "trip.date_time", "trip.ordinal", "trip.select", "trip.in_tag", "trip.case",
+      "trip.date_time", "trip.ordinal", "trip.select", "trip.in_tag", "trip.case", "trip.other_arg",
     ];
     const cli = runCli([dir]);
     expect(cli.status).not.toBe(0);
@@ -286,8 +353,17 @@ describe("CT1 translation check", () => {
     const okDir = makeTranslations({
       "en/trip.json": {
         "trip.same": "{count, plural, =0 {No trips} one {# trip with {owner}} other {# trips with {owner}}}",
+        // Inside a plural or selectordinal, {n} of its own argument counts as # (task 1.2).
+        "trip.items": "{n, plural, other {{n} items}}",
+        "trip.items_vi_n": "{n, plural, other {# items}}",
+        "trip.rank": "{n, selectordinal, other {{n}th}}",
       },
-      "vi/trip.json": { "trip.same": "{count, plural, other {# chuyến đi với {owner}}}" },
+      "vi/trip.json": {
+        "trip.same": "{count, plural, other {# chuyến đi với {owner}}}",
+        "trip.items": "{n, plural, other {# mục}}",
+        "trip.items_vi_n": "{n, plural, other {{n} mục}}",
+        "trip.rank": "{n, selectordinal, other {thứ #}}",
+      },
     });
     expect(await check(okDir)).toEqual([]);
     const okCli = runCli([okDir]);
