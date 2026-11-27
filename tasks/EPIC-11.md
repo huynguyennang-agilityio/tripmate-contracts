@@ -6,7 +6,7 @@
 **Machine:** Mac 1\
 **Spec:** [EPIC-11 spec](https://github.com/huynguyennang-agilityio/tripmate-docs/blob/main/docs/specs/epic-11/spec.md)\
 **Status:** Proposed\
-**Version:** 1.2
+**Version:** 1.3
 
 The tasks of EPIC-11 in this repository, in the order they start. Each task holds everything its Trello card will say ([development-flow.md](https://github.com/huynguyennang-agilityio/tripmate-docs/blob/main/docs/development-flow.md), section 1). The behaviour, the design, the order of the cards across repositories, and the checkpoints are in the spec, section 6.
 
@@ -86,11 +86,15 @@ None.
 **Scope**
 
 - A draft tag `contracts-vX.Y.Z-draft.N` when any operation is a stub, the next draft number on each merge; a release tag `contracts-vX.Y.Z` otherwise.
-- The breaking-change check against the last release tag and the latest draft; adding an optional field passes.
+- CI works out the version from the tags and the change, as the table in spec 2.10 says: the first tag is `0.1.0`; a draft is the next minor version and keeps its number until its release; a release that adds an operation, a field, or an enum value, or changes `events.schema.json`, is the next minor version; any other change is the next patch version.
+- Only a merge to `main` that changes `openapi.json`, `events.schema.json`, or a file under `translations/` is tagged.
+- The breaking-change check with `oasdiff`, pinned by version and checksum, against the last release tag and the latest draft; adding an optional field passes; with no tag yet, it passes.
+- The flow checks move their pin to the backend's `flow-checks.yml` with F15, and set `node-version: 24`, the test file pattern `tests/**/*.test.js`, and Vitest's no-test pattern. CT2's pull request is the first CI run of F15 with Node.
 
 **Leaves out**
 
 - Pinning a version in Web and Mobile: WF2 and MF2.
+- A breaking-change check for `events.schema.json`.
 
 **Done when**
 
@@ -106,6 +110,8 @@ None.
 | CT2-4 | Error | A change that removes a field, against the last release tag | The breaking-change check fails | C |
 | CT2-5 | Error | A change that breaks the latest draft | The check fails | C |
 | CT2-6 | Edge | A change that only adds an optional field | The check passes | C |
+| CT2-7 | Edge | After release `contracts-v0.1.0`, a merge that changes only translations | A release tag, `contracts-v0.1.1` | C |
+| CT2-8 | Edge | A merge that changes only the README or a task file | No tag | C |
 
 **Manual checks**
 
@@ -118,3 +124,4 @@ None.
 | 1.0 | 2026-11-25 | First version: the 2 tasks of EPIC-11 in this repository, moved from the EPIC-11 spec, sections 6 and 7, with scope, what each leaves out, the reason for its risk level, and its manual checks. The skeleton tasks write four agent roles, as development-flow.md now says. |
 | 1.1 | 2026-11-26 | CT1 scope, as the product owner decided before the tests: the checks are Node 24 scripts with Vitest and the `next-intl` ICU parser; flat translation keys that start with the file's area; `translations/**` is Low on the path list. |
 | 1.2 | 2026-11-26 | CT1 scope, as the product owner decided after review round 1: `tests/**`, `tasks/**`, `README.md`, and `.gitignore` are Low as in the backend; `{n}` inside its own plural counts as `#`. |
+| 1.3 | 2026-11-27 | CT2 scope, as the product owner decided before the tests (spec 2.10): CI works out the version, starting at `0.1.0`; only a change to the contract or the translations is tagged; `oasdiff` is the breaking-change check; the flow checks move their pin to F15 with Node 24. New cases CT2-7 and CT2-8. |
