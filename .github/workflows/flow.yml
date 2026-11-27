@@ -23,13 +23,23 @@ concurrency:
 
 jobs:
   flow:
-    uses: huynguyennang-agilityio/tripmate-backend/.github/workflows/flow-checks.yml@3f0e08d7d5442f0e968d220defbfdb740253aa61
+    uses: huynguyennang-agilityio/tripmate-backend/.github/workflows/flow-checks.yml@4b88e8cb5858084c43048c8c2e2d4ebe18447db9
     with:
       rules-file: .github/risk-paths.toml
+      # failing-first runs `npx vitest run <path>` once per test file the test commit adds (test_command
+      # plus the path) and wants a non-zero exit. A file with no test makes Vitest exit 1 with an
+      # `Error: No test found in suite ...` (a file with `describe` only) or `Error: No test suite found
+      # in file ...` (an empty file) line, which would pass as "failing"; `no-test-pattern` turns that
+      # into an error of the run. It allows the colour codes Vitest prints when FORCE_COLOR is set.
+      # No oasdiff in `setup-command`: a test commit runs only its own new test files, which must fail,
+      # and without oasdiff a CT2 test fails the same way, so it proves nothing wrong and nothing less.
       test-command: npx vitest run
       setup-command: npm ci
+      node-version: "24"
+      test-file-pattern: tests/**/*.test.js
+      no-test-pattern: '^(?:\x1b\[[0-9;]*m)*Error(?:\x1b\[[0-9;]*m)*: No test (?:found in suite|suite found in file)\b'
       run-mutation: false
       databases: false
       run-risk-gate: false
       flowchecks-repository: huynguyennang-agilityio/tripmate-backend
-      flowchecks-ref: 3f0e08d7d5442f0e968d220defbfdb740253aa61
+      flowchecks-ref: 4b88e8cb5858084c43048c8c2e2d4ebe18447db9

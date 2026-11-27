@@ -29,8 +29,8 @@ jobs:
       contents: read
       pull-requests: write
       checks: read
-    uses: huynguyennang-agilityio/tripmate-backend/.github/workflows/risk-gate-check.yml@3f0e08d7d5442f0e968d220defbfdb740253aa61
+    uses: huynguyennang-agilityio/tripmate-backend/.github/workflows/risk-gate-check.yml@4b88e8cb5858084c43048c8c2e2d4ebe18447db9
     with:
       rules-file: .github/risk-paths.toml
       flowchecks-repository: huynguyennang-agilityio/tripmate-backend
-      flowchecks-ref: 3f0e08d7d5442f0e968d220defbfdb740253aa61
+      flowchecks-ref: 4b88e8cb5858084c43048c8c2e2d4ebe18447db9

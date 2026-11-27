@@ -42,9 +42,13 @@ several machines".
 |------|---------|
 | Tests of the checks | `npm test` (Vitest) |
 | Translation check | `node scripts/check-translations.js [dir]` (`dir` defaults to `translations`) |
+| Breaking-change check | `node scripts/check-breaking.js [file]` (`file` defaults to `openapi.json`; run in the git repository) |
+| Next contract tag | `node scripts/contract-version.js [--base <rev>]` (prints the tag or nothing; creates none) |
+| Install oasdiff | `scripts/install-oasdiff.sh [dir]` (Linux amd64; version and checksum are in the script) |
 
-The check exits 0 when there is no problem, and non-zero with every
-problem's key printed otherwise.
+The checks exit 0 when there is no problem, and non-zero with every
+problem printed otherwise. `npm test` needs oasdiff for the CT2 tests: set
+`OASDIFF` to its binary, or have `oasdiff` on `PATH`.
 
 ## Translations
 
@@ -65,9 +69,21 @@ name is the job's name:
 
 | Job | Runs |
 |-----|------|
-| `translations` | `npm ci`, `npm test`, and `node scripts/check-translations.js` |
+| `translations` | `npm ci`, installs oasdiff (the tests need it), `npm test`, and `node scripts/check-translations.js` |
+| `breaking-change` | Pull requests only: installs oasdiff and runs `node scripts/check-breaking.js` |
 
-The breaking-change check against the last tag (card CT2) joins this file.
+Pushes to `main` also run the job `tag` (not required): it tags the merge
+with `scripts/contract-version.js`, the only job with `contents: write`.
+The contract pipeline is in the EPIC-11 spec,
+[section 2.10](../tripmate-docs/docs/specs/epic-11/spec.md):
+
+- A tag is `contracts-vX.Y.Z-draft.N` when any operation has `x-stub: true`, otherwise `contracts-vX.Y.Z`; the first tag is `0.1.0`.
+- A draft is the next minor version and keeps its number, with `N` +1 on each merge, until its release.
+- A release that adds an operation, a field, or an enum value, or changes `events.schema.json`, is the next minor version; any other change is the next patch version.
+- Only a merge that changes `openapi.json`, `events.schema.json`, or a file under `translations/` is tagged. The changed files are those since the last tag.
+- The breaking-change check runs `oasdiff breaking` against the last release tag and the latest draft newer than it; only error-level findings fail it, and with no tag yet it passes. Nothing checks `events.schema.json`.
+- oasdiff is pinned by version and SHA-256 in `scripts/install-oasdiff.sh`; every job that needs it runs that script.
+
 Third-party actions are pinned to a full commit SHA with the version in a
 comment.
 
@@ -83,10 +99,12 @@ The checks required on `main` are `flow / failing-first`,
 here (no rule files) and `flow / risk-gate` is always skipped; never
 require them.
 
-- The flow checks come from the backend's `flowchecks` package. Today
-  `failing-first` reads only Python test files, so in this repository the
-  test agent's failing run in the pull request is the evidence until that
-  check reads JavaScript tests.
+- The flow checks come from the backend's `flowchecks` package.
+  `failing-first` reads JavaScript tests (F15): `flow.yml` sets
+  `node-version: "24"`, `test-file-pattern: tests/**/*.test.js`, and a
+  `no-test-pattern` for Vitest's `No test found in suite` and `No test suite
+  found in file` errors, and runs `npx vitest run <test file>` of each new
+  test file at its test commit; it must fail. oasdiff is not installed there.
 - `test-lock`: a commit without the trailer `Agent: test` must not change,
   skip, or delete a test of a test commit. For JavaScript the lock covers each
   test file as a whole: any change to it by a commit without the trailer breaks it.
