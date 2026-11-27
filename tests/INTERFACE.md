@@ -199,6 +199,60 @@ checkBreaking(file, references)
   `OASDIFF` when set, otherwise `oasdiff` on `PATH`. The tests do not
   install it; they need it to pass.
 
+## CT2 Decisions of the lead (test-check, rounds 3 and 4)
+
+The spec leaves these open; the lead decided them, and the tests in
+`CT2-sunset-dates.test.js`, `CT2-deprecated-paths.test.js`, and
+`CT2-version-more-places.test.js` check them. `CT2-sunset-dates.test.js`
+also covers, at its end, the rows of the table above that had no test of
+their own.
+
+- C1, today: "today" for `x-sunset` is the UTC date for every kind of
+  removal (optional field, required field, operation, header), also
+  those oasdiff rates itself, whatever `TZ` the process runs with. An
+  `x-sunset` of today (UTC) is reached: the removal passes; one of
+  tomorrow (UTC) is not: it fails. The tests run the check in a child
+  process with `TZ=Pacific/Pago_Pago` (UTC-11) and
+  `TZ=Pacific/Kiritimati` (UTC+14).
+- C2, the date format: `x-sunset` is read as oasdiff reads it, an
+  RFC 3339 date `YYYY-MM-DD` or date-time (`2020-01-01T00:00:00Z`). A
+  past one passes for every kind (an optional field and a header too).
+  An invalid date (`2020-13-45`, `2020-02-30`) or any other malformed
+  value (`2020-1-1`, `soon`, an empty string) fails the check for every
+  kind.
+- C3, a name with `/`: a removed name such as `home/city` can be read
+  as one name or as `home` then `city`. When the schema has both and
+  they disagree about `deprecated`, removing the one that is not
+  deprecated fails (`home.city` removed, the deprecated `"home/city"`
+  kept), and removing the deprecated one while the other remains passes.
+- C4, depth: a deprecated field nested 60 levels of objects deep is
+  found; removing it passes (removing one that is not deprecated fails).
+- C5, where a field counts for the version (`nextTag`): adding a field
+  under `$defs` (an entry named `default`), under `dependentSchemas`, in
+  a webhook named `example` (`webhooks`), under a callback, or in the
+  headers of an `encoding` entry named `default` gives
+  `contracts-v0.2.0` after `contracts-v0.1.0`.
+
+Round 4 of the test-check added these:
+
+- P2, a date-time with an offset: an `x-sunset` date-time counts by the
+  UTC date of its instant, for every kind (optional field, required
+  field, operation, optional header, required header). With D today's
+  UTC date, `<D>T23:30:00-05:00` (UTC date D+1) is not reached: the
+  removal fails; `<D+1>T01:00:00+05:00` (UTC date D) is reached: it
+  passes. The tests compute D when they run, and wait until UTC midnight
+  has passed when it is less than 90 seconds away.
+- P3, values refused: a value oasdiff or RFC 3339 refuses counts as not
+  reached, for every kind: the leap second `2016-12-31T23:59:60Z`, the
+  offset `+24:00` (`2020-01-01T00:00:00+24:00`), and `:60` seconds at a
+  minute other than 23:59 (`2020-01-01T12:00:60Z`). The removal fails.
+- P4, lowercase: a lowercase `t` or `z` (RFC 3339 allows it) is valid
+  for every kind: the past `2020-01-01t00:00:00z` passes.
+- P5, operations for the version (`nextTag`): adding an operation in
+  `webhooks` (a new webhook, or a new method on an existing one) or in a
+  callback (a new callback, or a new method in an existing one), even
+  with no fields, gives `contracts-v0.2.0` after `contracts-v0.1.0`.
+
 ## CT2 The breaking-change check as a command
 
 ```sh
