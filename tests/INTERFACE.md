@@ -253,6 +253,17 @@ Round 4 of the test-check added these:
   callback (a new callback, or a new method in an existing one), even
   with no fields, gives `contracts-v0.2.0` after `contracts-v0.1.0`.
 
+Round 5 of the test-check added this (`CT2-sunset-unchanged.test.js`):
+
+- R1, unchanged items: a contract item that did not change never fails
+  because of its `x-sunset`. When the reference and the new document
+  are the same, each holding a deprecated operation, query parameter,
+  response property (optional or required), or response header, the
+  check passes (`ok`, no problem) whatever the form of its `x-sunset`:
+  `<D>T23:30:00-05:00` (D today's UTC date), `2016-12-31T23:59:60Z`,
+  `2030-01-01t00:00:00z`, `2099-1-1`, a number, a boolean, or
+  `2099-12-31`. The date rules above apply to removals only.
+
 ## CT2 The breaking-change check as a command
 
 ```sh
