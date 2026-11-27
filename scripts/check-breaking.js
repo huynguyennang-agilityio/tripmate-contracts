@@ -42,7 +42,9 @@ function runOasdiff(command, reference, file) {
   const run = spawnSync(
     oasdiffBinary(),
     [command, path.resolve(reference.file), path.resolve(file), "--format", "json", "--allow-external-refs=false"],
-    { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
+    // TZ=UTC: oasdiff compares `x-sunset` with today's date in the process's time zone; the
+    // check's "today" is always the UTC date.
+    { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, env: { ...process.env, TZ: "UTC" } },
   );
   const fail = (message) => ({ error: { tag: reference.tag, message } });
   if (run.error) return fail(`cannot run oasdiff (${oasdiffBinary()}): ${run.error.message}`);
@@ -78,9 +80,36 @@ function resolveRef(doc, node) {
   return current;
 }
 
-// A removal is allowed when the node is marked `deprecated: true` and its `x-sunset` (YYYY-MM-DD) is
-// absent, today, or past. A `$ref` node is read before the ref is resolved (OpenAPI 3.1 allows
-// `deprecated` beside `$ref`), then the target. An unreadable date is not past.
+// `x-sunset` as oasdiff reads it: an RFC 3339 full-date  or date-time
+// (`2020-01-01T00:00:00Z`, with a fraction and a `Z` or `+HH:MM` offset). Returns the UTC date
+//  or null for a malformed value or a date that does not exist.
+const FULL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/;
+function sunsetUtcDate(value) {
+  if (typeof value !== "string") return null;
+  const match = FULL_DATE.exec(value) ?? DATE_TIME.exec(value);
+  if (!match) return null;
+  const [year, month, day] = match.slice(1, 4).map(Number);
+  const check = new Date(Date.UTC(2000, month - 1, day));
+  check.setUTCFullYear(year);
+  if (month < 1 || month > 12 || check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) return null;
+  if (match.length === 4) return value;
+  const [hour, minute, second] = match.slice(4, 7).map(Number);
+  // RFC 3339 allows :60 only for a leap second, which the check treats as not reached (decision P3).
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  let offset = 0;
+  if (match[7]) {
+    const [oh, om] = [Number(match[8]), Number(match[9])];
+    if (oh > 23 || om > 59) return null;
+    offset = (match[7] === "-" ? -1 : 1) * (oh * 60 + om);
+  }
+  const instant = Date.UTC(year, month - 1, day, hour, minute, second) - offset * 60000;
+  return new Date(instant).toISOString().slice(0, 10);
+}
+
+// A removal is allowed when the node is marked `deprecated: true` and its `x-sunset` is absent,
+// today (UTC), or past. A `$ref` node is read before the ref is resolved (OpenAPI 3.1 allows
+// `deprecated` beside `$ref`), then the target. An invalid or malformed date is not reached.
 function removalAllowed(doc, node, today = new Date().toISOString().slice(0, 10)) {
   const own = node && typeof node === "object" ? node : {};
   const target = resolveRef(doc, node) ?? {};
@@ -88,29 +117,46 @@ function removalAllowed(doc, node, today = new Date().toISOString().slice(0, 10)
   if (!deprecated) return false;
   const sunset = own["x-sunset"] ?? target["x-sunset"];
   if (sunset === undefined || sunset === null) return true;
-  return typeof sunset === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sunset) && sunset <= today;
+  const date = sunsetUtcDate(sunset);
+  return date !== null && date <= today;
 }
 
-// The schema nodes that `path` (oasdiff's name of a property: segments joined by `/`, with `items`,
-// `allOf[subschema #N]`, `oneOf[...]`, `anyOf[...]`; a property name may contain `/` itself) can
-// name below `schema`. A node is returned as written (a `$ref` node is not resolved).
-function schemaNodes(doc, schema, path, depth = 0) {
-  if (path === "") return [schema];
+// The readings of `path` (oasdiff's name of a property: segments joined by `/`, with `items`,
+// `allOf[subschema #N]`, `oneOf[...]`, `anyOf[...]`; a property name may contain `/` itself) below
+// `schema`: each is { node (as written, a `$ref` node is not resolved), steps }, where `steps` is
+// the way down, to follow in another document. Every step consumes part of `path`, so the
+// recursion ends (a `$ref` cycle included).
+function schemaNodes(doc, schema, path, steps = []) {
+  if (path === "") return [{ node: schema, steps }];
   const resolved = resolveRef(doc, schema);
-  if (!resolved || typeof resolved !== "object" || depth > 50) return [];
+  if (!resolved || typeof resolved !== "object") return [];
   const found = [];
-  const step = (prefix, next) => {
-    if (next !== undefined && path.startsWith(prefix)) found.push(...schemaNodes(doc, next, path.slice(prefix.length), depth + 1));
+  const step = (prefix, next, taken) => {
+    if (next !== undefined && path.startsWith(prefix)) found.push(...schemaNodes(doc, next, path.slice(prefix.length), [...steps, taken]));
   };
-  step("items/", resolved.items);
+  step("items/", resolved.items, { items: true });
   for (const kind of ["allOf", "oneOf", "anyOf"]) {
-    (resolved[kind] ?? []).forEach?.((sub, i) => step(`${kind}[subschema #${i + 1}]/`, sub));
+    (resolved[kind] ?? []).forEach?.((sub, i) => step(`${kind}[subschema #${i + 1}]/`, sub, { kind, i }));
   }
   for (const [name, property] of Object.entries(resolved.properties ?? {})) {
-    if (path === name) found.push(property);
-    else step(`${name}/`, property);
+    if (path === name) found.push({ node: property, steps: [...steps, { name }] });
+    else step(`${name}/`, property, { name });
   }
   return found;
+}
+
+// The node at `steps` below `schema` in `doc`, or undefined when it is not there.
+function followSteps(doc, schema, steps) {
+  let node = schema;
+  for (const s of steps) {
+    const resolved = resolveRef(doc, node);
+    if (!resolved || typeof resolved !== "object") return undefined;
+    if (s.items) node = resolved.items;
+    else if (s.kind) node = Array.isArray(resolved[s.kind]) ? resolved[s.kind][s.i] : undefined;
+    else node = Object.hasOwn(resolved.properties ?? {}, s.name) ? resolved.properties[s.name] : undefined;
+    if (node === undefined) return undefined;
+  }
+  return node;
 }
 
 function operationOf(doc, finding) {
@@ -118,17 +164,23 @@ function operationOf(doc, finding) {
 }
 
 // True when the property that `finding` says was removed is marked deprecated in `doc` (the
-// reference document), and its x-sunset allows the removal. Anything that cannot be found is not
-// deprecated.
-function propertyRemovalAllowed(doc, finding) {
+// reference document), and its x-sunset allows the removal. A name with `/` has several readings;
+// those that exist in `doc` and are gone from `newDoc` are the removed ones, and all of them must
+// allow the removal. Anything that cannot be found is not deprecated.
+function propertyRemovalAllowed(doc, newDoc, finding) {
   const named = /property `([^`]+)`.*response with the `([^`]+)` status/.exec(finding.text ?? "");
   const operation = operationOf(doc, finding);
   if (!named || !operation) return false;
   const response = resolveRef(doc, operation.responses?.[named[2]]);
-  for (const media of Object.values(response?.content ?? {})) {
-    if (schemaNodes(doc, media?.schema, named[1]).some((node) => removalAllowed(doc, node))) return true;
+  const newResponse = resolveRef(newDoc, operationOf(newDoc, finding)?.responses?.[named[2]]);
+  const removed = [];
+  for (const [mediaType, media] of Object.entries(response?.content ?? {})) {
+    const newSchema = newResponse?.content?.[mediaType]?.schema;
+    for (const { node, steps } of schemaNodes(doc, media?.schema, named[1])) {
+      if (followSteps(newDoc, newSchema, steps) === undefined) removed.push(node);
+    }
   }
-  return false;
+  return removed.length > 0 && removed.every((node) => removalAllowed(doc, node));
 }
 
 // The removed header of `finding`: { name (as the reference writes it), allowed }. oasdiff
@@ -142,12 +194,52 @@ function removedHeader(doc, finding) {
   return { name: original, allowed: removalAllowed(doc, response.headers[original]) };
 }
 
+// A copy of the reference document where every string `x-sunset` is re-rated by `sunsetUtcDate`
+// before oasdiff reads it: a valid value becomes its UTC date `YYYY-MM-DD`, an invalid one (also
+// a leap second or the offset +24:00, which oasdiff accepts) becomes a value oasdiff refuses. So
+// oasdiff's own sunset findings (`*-removed-before-sunset`, `*-sunset-parse`,
+// `*-removed-with-deprecation`, the required-property ones) follow the check's date rule, also the
+// removals it passes in silence. A property named `x-sunset` holds an object and is left alone.
+function normalizeSunsets(node) {
+  if (Array.isArray(node)) return node.map(normalizeSunsets);
+  if (node === null || typeof node !== "object") return node;
+  const copy = {};
+  for (const [key, child] of Object.entries(node)) {
+    if (key === "x-sunset" && (child === null || typeof child !== "object")) {
+      if (child === null) continue;
+      copy[key] = sunsetUtcDate(child) ?? "invalid";
+    } else {
+      copy[key] = normalizeSunsets(child);
+    }
+  }
+  return copy;
+}
+
 function compare(reference, file) {
+  let rated = reference;
+  let ratedDir = null;
+  try {
+    const text = JSON.parse(readFileSync(reference.file, "utf8"));
+    ratedDir = mkdtempSync(path.join(tmpdir(), "check-breaking-rated-"));
+    const copy = path.join(ratedDir, "reference.json");
+    writeFileSync(copy, JSON.stringify(normalizeSunsets(text)));
+    rated = { ...reference, file: copy };
+  } catch {
+    // Not JSON: oasdiff reports it.
+  }
+  try {
+    return compareRated(reference, rated, file);
+  } finally {
+    if (ratedDir) rmSync(ratedDir, { recursive: true, force: true });
+  }
+}
+
+function compareRated(reference, rated, file) {
   // `breaking` lists the error and warning findings; `changelog` also lists the info ones, where
   // the removal of an optional response property is.
-  const breaking = runOasdiff("breaking", reference, file);
+  const breaking = runOasdiff("breaking", rated, file);
   if (breaking.error) return [breaking.error];
-  const changelog = runOasdiff("changelog", reference, file);
+  const changelog = runOasdiff("changelog", rated, file);
   if (changelog.error) return [changelog.error];
   let referenceDoc = null;
   try {
@@ -155,13 +247,19 @@ function compare(reference, file) {
   } catch {
     // oasdiff read the file, so this only loses the deprecation lookup.
   }
+  let newDoc = null;
+  try {
+    newDoc = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    // Same: every reading then counts as removed.
+  }
   const seen = new Set();
   const problems = [];
   for (const f of [...breaking.findings, ...changelog.findings]) {
     if (IGNORED_IDS.has(f.id)) continue;
     let text = f.text;
     if (f.id === REMOVED_OPTIONAL_RESPONSE_PROPERTY) {
-      if (propertyRemovalAllowed(referenceDoc, f)) continue;
+      if (propertyRemovalAllowed(referenceDoc, newDoc, f)) continue;
     } else if (REMOVED_RESPONSE_HEADER.has(f.id)) {
       const header = removedHeader(referenceDoc, f);
       if (header?.allowed) continue;

@@ -53,15 +53,43 @@ export function latestDraft(tags) {
   return highest(tags.map(parseTag).filter((t) => t && t.draft !== null));
 }
 
-function operations(contract) {
-  const found = [];
-  for (const [route, item] of Object.entries(contract?.paths ?? {})) {
+// An operation of each path item below `items` (a map of names to path items), keyed by `where`.
+function pathItemOperations(items, where, found) {
+  for (const [name, item] of Object.entries(items && typeof items === "object" ? items : {})) {
     for (const method of METHODS) {
       if (item && typeof item === "object" && item[method] && typeof item[method] === "object") {
-        found.push({ key: `${method} ${route}`, operation: item[method] });
+        found.push({ key: `${where}${method} ${name}`, operation: item[method] });
       }
     }
   }
+}
+
+// The operations of a contract: those of `paths`, of `webhooks`, and of every callback (of an
+// operation, or in `components`), however deep.
+function operations(contract) {
+  const found = [];
+  pathItemOperations(contract?.paths, "", found);
+  pathItemOperations(contract?.webhooks, "webhook ", found);
+  const callbacks = (container, where) => {
+    for (const [name, callback] of Object.entries(container && typeof container === "object" ? container : {})) {
+      pathItemOperations(callback, `callback ${where}/${name} `, found);
+      for (const item of Object.values(callback && typeof callback === "object" ? callback : {})) {
+        for (const method of METHODS) {
+          if (item && typeof item === "object") callbacks(item[method]?.callbacks, `${where}/${name}/${method}`);
+        }
+      }
+    }
+  };
+  const visit = (items, where) => {
+    for (const [name, item] of Object.entries(items && typeof items === "object" ? items : {})) {
+      for (const method of METHODS) {
+        if (item && typeof item === "object") callbacks(item[method]?.callbacks, `${where}${name}/${method}`);
+      }
+    }
+  };
+  visit(contract?.paths, "");
+  visit(contract?.webhooks, "webhook ");
+  callbacks(contract?.components?.callbacks, "components");
   return found;
 }
 
@@ -71,7 +99,7 @@ export function hasStub(contract) {
 
 // Keys whose value is a map from names to things (a path, a response status, a media type, a
 // header, a property): the keys of that map are names, never keywords.
-const NAME_MAPS = new Set(["paths", "responses", "content", "headers", "properties", "patternProperties"]);
+const NAME_MAPS = new Set(["paths", "responses", "content", "headers", "properties", "patternProperties", "$defs", "dependentSchemas", "webhooks", "encoding"]);
 
 // The operations, the fields (keys of a `properties` object), and the enum values of a
 // document, each named by where it is, so that two documents can be compared.
@@ -79,7 +107,8 @@ function features(contract) {
   const found = new Set();
   for (const { key } of operations(contract)) found.add(`operation ${key}`);
   // mode: "keywords" (the keys are schema or OpenAPI keywords), "names" (the keys are names of a
-  // name map), or "components" (the keys are the `components` groups, each a name map).
+  // name map), or "groups" (the keys are the `components` groups, or the names of the `callbacks`
+  // of an operation, each a name map: of schemas, or of runtime expressions).
   const walk = (node, where, mode) => {
     if (Array.isArray(node)) {
       node.forEach((child, i) => walk(child, `${where}/${i}`, "keywords"));
@@ -92,7 +121,7 @@ function features(contract) {
         walk(child, here, "keywords");
         continue;
       }
-      if (mode === "components") {
+      if (mode === "groups") {
         walk(child, here, "names");
         continue;
       }
@@ -104,8 +133,9 @@ function features(contract) {
       if (key === "enum" && Array.isArray(child)) {
         for (const value of child) found.add(`enum ${here} ${JSON.stringify(value)}`);
       }
-      if (NAME_MAPS.has(key)) walk(child, here, "names");
-      else if (key === "components" && where === "") walk(child, here, "components");
+      if (key === "callbacks") walk(child, here, "groups");
+      else if (NAME_MAPS.has(key)) walk(child, here, "names");
+      else if (key === "components" && where === "") walk(child, here, "groups");
       else walk(child, here, "keywords");
     }
   };

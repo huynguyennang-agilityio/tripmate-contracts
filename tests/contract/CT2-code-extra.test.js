@@ -164,3 +164,10 @@ test("a removed header or property of a deprecated shape follows its x-sunset; a
   expect((await run(nested(true), without)).ok).toBe(true);
   expect((await run(nested(false), without)).ok).toBe(false);
 });
+
+test("a name with / read two ways: removing the deprecated home.city passes while a plain \"home/city\" remains", async () => {
+  const { check, doc, expectPasses, obj, str } = await import("./CT2-rules-helpers.js");
+  const before = doc(obj({ id: str(), "home/city": str(), home: obj({ city: str({ deprecated: true }), zip: str() }) }));
+  const after = doc(obj({ id: str(), "home/city": str(), home: obj({ zip: str() }) }));
+  expectPasses(await check(before, after));
+});
