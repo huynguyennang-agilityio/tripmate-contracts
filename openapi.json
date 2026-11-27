@@ -1,5 +1,17 @@
 {
   "components": {
+    "parameters": {
+      "DeviceId": {
+        "description": "The ID of the device, a UUID the client makes once (security.md).",
+        "in": "header",
+        "name": "X-Device-Id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    },
     "schemas": {
       "ErrorDetail": {
         "properties": {
@@ -85,6 +97,38 @@
         ],
         "title": "FieldProblem",
         "type": "object"
+      },
+      "Health": {
+        "description": "The answer of a healthy instance. The example is what the mock modes of Web and Mobile\nreturn (card F17).",
+        "examples": [
+          {
+            "status": "ok",
+            "version": "0.1.0"
+          }
+        ],
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "Health",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "bearerFormat": "JWT",
+        "scheme": "bearer",
+        "type": "http"
       }
     }
   },
@@ -102,11 +146,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Health V1 Health Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/Health"
                 }
               }
             },
