@@ -10,6 +10,16 @@
           "format": "uuid",
           "type": "string"
         }
+      },
+      "IdempotencyKey": {
+        "description": "A UUID the client makes once for each create request (api-design.md).",
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
       }
     },
     "schemas": {
