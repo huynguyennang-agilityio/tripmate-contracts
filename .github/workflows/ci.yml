@@ -66,9 +66,10 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-    # One run at a time, so two merges never compute the same tag. A waiting run is never
-    # cancelled by a newer one; GitHub keeps at most one waiting run, and the next run works out
-    # the tag from the last tag, so a merge whose run was replaced is still tagged then.
+    # One run at a time, so two merges never compute the same tag. GitHub cancels a waiting run when
+    # a newer one queues in the same group (`cancel-in-progress: false` only spares the running one).
+    # That is safe: each run counts the changes since the last tag, so the next run tags the merge
+    # of a cancelled one, and a run for a commit the last tag already contains tags nothing.
     concurrency:
       group: contract-tag
       cancel-in-progress: false

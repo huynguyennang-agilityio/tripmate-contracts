@@ -38,24 +38,48 @@ test("a tag that is not a contract tag is ignored, and a draft before its releas
   expect(referenceTags([])).toEqual([]);
 });
 
-test("the command prints the next tag from the last tag's commit, and nothing when no file counts", async () => {
+function makeRepo() {
   const repo = makeTempDir("ct2-version-repo-");
   const git = (...args) => {
     const r = spawnSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", ...args], { cwd: repo, encoding: "utf8" });
     if (r.status !== 0) throw new Error(r.stderr);
     return r.stdout.trim();
   };
-  const script = path.join(repoRoot, "scripts", "contract-version.js");
-  const run = () => spawnSync(process.execPath, [script], { cwd: repo, encoding: "utf8" });
+  const commit = (name, value, message) => {
+    writeJson(repo, name, value);
+    git("add", "-A");
+    git("commit", "-q", "-m", message);
+    return git("rev-parse", "HEAD");
+  };
+  const run = () => spawnSync(process.execPath, [path.join(repoRoot, "scripts", "contract-version.js")], { cwd: repo, encoding: "utf8" });
   git("init", "-q");
-  writeJson(repo, "openapi.json", makeContract());
-  git("add", "-A");
-  git("commit", "-q", "-m", "first");
+  return { git, commit, run };
+}
+
+test("with no tag yet, only the merge itself counts (its first parent is the base); a root commit counts whole", () => {
+  const { git, commit, run } = makeRepo();
+  commit("openapi.json", makeContract(), "root");
+  expect(run().stdout.trim()).toBe("contracts-v0.1.0"); // a root commit: the empty tree is the base
+  commit("notes.json", {}, "CI, scripts, docs only");
+  expect(run().stdout.trim()).toBe(""); // openapi.json is older than the merge: no tag
+  commit("openapi.json", makeContract({ extraPath: "/trips" }), "the next openapi.json");
   expect(run().stdout.trim()).toBe("contracts-v0.1.0");
+  expect(git("tag", "--list")).toBe("");
+});
+
+test("once a tag exists, changes count since the tag; HEAD inside the last tag gets no tag", () => {
+  const { git, commit, run } = makeRepo();
+  commit("openapi.json", makeContract(), "first");
   git("tag", "contracts-v0.1.0");
-  writeJson(repo, "notes.json", {});
-  git("add", "-A");
-  git("commit", "-q", "-m", "readme only");
-  expect(run().stdout.trim()).toBe("");
-  expect(run().status).toBe(0);
+  const older = commit("notes.json", {}, "readme only");
+  expect(run().stdout.trim()).toBe(""); // nothing tagged changed since the tag
+  const newer = commit("openapi.json", makeContract({ extraPath: "/trips" }), "adds an operation");
+  expect(run().stdout.trim()).toBe("contracts-v0.2.0");
+  git("tag", "contracts-v0.2.0");
+  // The run of an older merge comes late: HEAD is inside the last tag, so no tag, never a higher one.
+  for (const rev of [older, newer, "contracts-v0.1.0"]) {
+    git("checkout", "-q", "--detach", rev);
+    expect(run().stdout.trim()).toBe("");
+    expect(run().status).toBe(0);
+  }
 });

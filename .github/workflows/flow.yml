@@ -26,15 +26,17 @@ jobs:
     uses: huynguyennang-agilityio/tripmate-backend/.github/workflows/flow-checks.yml@4b88e8cb5858084c43048c8c2e2d4ebe18447db9
     with:
       rules-file: .github/risk-paths.toml
-      # failing-first runs `npx vitest run <path>` once per test file the test commit adds (test_command
+      # failing-first runs `test-command <path>` once per test file the test commit adds (test_command
       # plus the path) and wants a non-zero exit. A file with no test makes Vitest exit 1 with an
       # `Error: No test found in suite ...` (a file with `describe` only) or `Error: No test suite found
       # in file ...` (an empty file) line, which would pass as "failing"; `no-test-pattern` turns that
       # into an error of the run. It allows the colour codes Vitest prints when FORCE_COLOR is set.
-      # No oasdiff in `setup-command`: a test commit runs only its own new test files, which must fail,
-      # and without oasdiff a CT2 test fails the same way, so it proves nothing wrong and nothing less.
-      test-command: npx vitest run
-      setup-command: npm ci
+      # failing-first runs the command in a worktree of the test commit that has no node_modules, so
+      # `npx` would fetch the latest Vitest: the version is pinned here, in step with package.json.
+      # The real fix is backend card F16, which runs the caller's setup in that worktree.
+      test-command: npx --yes vitest@5.1.1 run
+      # oasdiff is for the CT2 tests; the script writes OASDIFF to GITHUB_ENV.
+      setup-command: npm ci && bash scripts/install-oasdiff.sh "$RUNNER_TEMP/oasdiff"
       node-version: "24"
       test-file-pattern: tests/**/*.test.js
       no-test-pattern: '^(?:\x1b\[[0-9;]*m)*Error(?:\x1b\[[0-9;]*m)*: No test (?:found in suite|suite found in file)\b'

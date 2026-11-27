@@ -4,9 +4,11 @@
 //   node scripts/contract-version.js [--base <rev>]
 //
 // Run in the git repository. It prints the next tag, or nothing when the merge gets none, and
-// never creates a tag (CI does). The paths are those changed from `--base` to HEAD; the default
-// base is the commit of the last tag, or the empty tree when there is no tag, so a merge whose
-// run was skipped is picked up by the next run.
+// never creates a tag (CI does). The paths are those changed from `--base` to HEAD. The default
+// base is the merge base with the last tag, so a merge whose run was skipped is picked up by the
+// next run; with no tag yet it is the first parent of HEAD (the empty tree for a root commit), so
+// only the merge itself counts. A HEAD that the last tag already contains (an older merge whose
+// run came late) gets no tag.
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
@@ -131,6 +133,17 @@ function git(...args) {
   return result.stdout;
 }
 
+function isAncestor(a, b) {
+  const result = spawnSync("git", ["merge-base", "--is-ancestor", a, b]);
+  if (result.error) throw result.error;
+  if (result.status > 1) throw new Error(`git merge-base --is-ancestor failed: ${String(result.stderr).trim()}`);
+  return result.status === 0;
+}
+
+function hasParent() {
+  return spawnSync("git", ["rev-parse", "--verify", "--quiet", "HEAD^1"]).status === 0;
+}
+
 function main(argv) {
   let base = null;
   for (let i = 0; i < argv.length; i++) {
@@ -140,8 +153,9 @@ function main(argv) {
   const tags = git("tag", "--list", `${TAG_PREFIX}*`).split("\n").filter(Boolean);
   const last = lastTag(tags);
   const lastName = last?.name ?? null;
-  const from = base ?? (lastName ? `${lastName}^{commit}` : EMPTY_TREE);
-  const changedPaths = git("diff", "--name-only", "-z", from, "HEAD").split("\0").filter(Boolean);
+  if (lastName && base === null && isAncestor("HEAD", `${lastName}^{commit}`)) return 0;
+  const diffArgs = base !== null ? [base, "HEAD"] : lastName ? [`${lastName}^{commit}...HEAD`] : [hasParent() ? "HEAD^1" : EMPTY_TREE, "HEAD"];
+  const changedPaths = git("diff", "--name-only", "-z", ...diffArgs).split("\0").filter(Boolean);
   const contract = JSON.parse(readFileSync("openapi.json", "utf8"));
   const previousContract = lastName ? JSON.parse(git("show", `${lastName}:openapi.json`)) : null;
   const tag = nextTag({ tags, changedPaths, contract, previousContract });

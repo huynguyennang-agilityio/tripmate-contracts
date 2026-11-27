@@ -34,27 +34,46 @@ function oasdiffBinary() {
   return process.env.OASDIFF || "oasdiff";
 }
 
-function compare(reference, file) {
-  const run = spawnSync(oasdiffBinary(), ["breaking", path.resolve(reference.file), path.resolve(file), "--format", "json"], {
-    encoding: "utf8",
-    maxBuffer: 256 * 1024 * 1024,
-  });
-  const fail = (message) => [{ tag: reference.tag, message }];
+function runOasdiff(command, reference, file) {
+  const run = spawnSync(
+    oasdiffBinary(),
+    [command, path.resolve(reference.file), path.resolve(file), "--format", "json", "--allow-external-refs=false"],
+    { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
+  );
+  const fail = (message) => ({ error: { tag: reference.tag, message } });
   if (run.error) return fail(`cannot run oasdiff (${oasdiffBinary()}): ${run.error.message}`);
   if (run.status !== 0) return fail(`oasdiff exited with ${run.status}: ${(run.stderr || run.stdout).trim()}`);
   let findings;
   try {
     findings = JSON.parse(run.stdout || "[]");
-  } catch (error) {
+  } catch {
     return fail(`oasdiff printed no JSON: ${run.stdout.trim().slice(0, 500)}`);
   }
   if (!Array.isArray(findings)) return fail("oasdiff printed JSON that is not a list of findings");
-  return findings
-    .filter((f) => ERROR_LEVELS.has(f.level))
-    .map((f) => ({
-      tag: reference.tag,
-      message: [f.text, f.operation && f.path ? `(${f.operation} ${f.path})` : f.path ? `(${f.path})` : ""].filter(Boolean).join(" "),
-    }));
+  return { findings };
+}
+
+// Removing any response property breaks a client that reads it, an optional one too, although
+// oasdiff rates the removal of an optional property below error (product owner's decision).
+const REMOVED_RESPONSE_PROPERTY = /^response-.*property-removed$/;
+
+function compare(reference, file) {
+  // `breaking` lists the error and warning findings; `changelog` also lists the info ones, where
+  // the removal of an optional response property is.
+  const breaking = runOasdiff("breaking", reference, file);
+  if (breaking.error) return [breaking.error];
+  const changelog = runOasdiff("changelog", reference, file);
+  if (changelog.error) return [changelog.error];
+  const seen = new Set();
+  const problems = [];
+  for (const f of [...breaking.findings, ...changelog.findings]) {
+    if (!ERROR_LEVELS.has(f.level) && !REMOVED_RESPONSE_PROPERTY.test(f.id ?? "")) continue;
+    const message = [f.text, f.operation && f.path ? `(${f.operation} ${f.path})` : f.path ? `(${f.path})` : ""].filter(Boolean).join(" ");
+    if (seen.has(message)) continue;
+    seen.add(message);
+    problems.push({ tag: reference.tag, message });
+  }
+  return problems;
 }
 
 // references: [{ tag, file }]; returns { ok, problems: [{ tag, message }] }.

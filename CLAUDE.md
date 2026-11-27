@@ -80,8 +80,8 @@ The contract pipeline is in the EPIC-11 spec,
 - A tag is `contracts-vX.Y.Z-draft.N` when any operation has `x-stub: true`, otherwise `contracts-vX.Y.Z`; the first tag is `0.1.0`.
 - A draft is the next minor version and keeps its number, with `N` +1 on each merge, until its release.
 - A release that adds an operation, a field, or an enum value, or changes `events.schema.json`, is the next minor version; any other change is the next patch version.
-- Only a merge that changes `openapi.json`, `events.schema.json`, or a file under `translations/` is tagged. The changed files are those since the last tag.
-- The breaking-change check runs `oasdiff breaking` against the last release tag and the latest draft newer than it; only error-level findings fail it, and with no tag yet it passes. Nothing checks `events.schema.json`.
+- Only a merge that changes `openapi.json`, `events.schema.json`, or a file under `translations/` is tagged. The changed files are those since the last tag, or those of the merge itself (its first parent) when there is no tag yet, so the first tag comes with the first `openapi.json` change. A run for a commit the last tag already contains tags nothing.
+- The breaking-change check runs `oasdiff breaking` against the last release tag and the latest draft newer than it; error-level findings fail it, and so does any removed response property, an optional one too; with no tag yet it passes. Nothing checks `events.schema.json`.
 - oasdiff is pinned by version and SHA-256 in `scripts/install-oasdiff.sh`; every job that needs it runs that script.
 
 Third-party actions are pinned to a full commit SHA with the version in a
@@ -103,8 +103,10 @@ require them.
   `failing-first` reads JavaScript tests (F15): `flow.yml` sets
   `node-version: "24"`, `test-file-pattern: tests/**/*.test.js`, and a
   `no-test-pattern` for Vitest's `No test found in suite` and `No test suite
-  found in file` errors, and runs `npx vitest run <test file>` of each new
-  test file at its test commit; it must fail. oasdiff is not installed there.
+  found in file` errors, and runs `npx --yes vitest@5.1.1 run <test file>` (the
+  worktree has no `node_modules`; keep the version in step with `package.json`
+  until backend card F16 runs the caller's setup there) for each new test file
+  at its test commit; it must fail. The `setup-command` also installs oasdiff.
 - `test-lock`: a commit without the trailer `Agent: test` must not change,
   skip, or delete a test of a test commit. For JavaScript the lock covers each
   test file as a whole: any change to it by a commit without the trailer breaks it.
