@@ -7,7 +7,7 @@ What the tests need from the code, and nothing more, card by card:
   section 7, and the task's scope, version 1.2 (cases CT1-1 to CT1-4),
   in the sections whose names start with "CT1".
 - CT2 Draft and release tags: from the EPIC-11 spec, section 2.10
-  (version 2.5), api-design.md, section 6, and the task's scope,
+  (version 2.8), api-design.md, section 6, and the task's scope,
   version 1.3 (cases CT2-1 to CT2-8), in the sections whose names
   start with "CT2".
 
@@ -137,6 +137,15 @@ The result, from the table in spec 2.10:
 | CT2-2 | Draft `X.Y.Z-draft.N` | Any operation is a stub | `contracts-vX.Y.Z-draft.(N+1)` |
 | CT2-3 | Draft `X.Y.Z-draft.N` | No stub | `contracts-vX.Y.Z` |
 
+- A field or an enum value counts wherever it is added: under any
+  response, `responses.default` included, and in any component schema,
+  one named `default` or `example` included (review round 2, defect 2).
+- `default`, `example`, `examples`, `const`, and `x-*` are skipped only
+  where they are keywords of a schema, never where they are the name of
+  a response, a component schema, or a property. A `description` is not
+  a field: adding only a description, also to a property named
+  `properties`, is a patch (`v0.1.0` to `v0.1.1`).
+
 ## CT2 The breaking-change check as a module
 
 `scripts/check-breaking.js` is an ES module that exports:
@@ -155,19 +164,37 @@ checkBreaking(file, references)
 
 - `referenceTags` is pure. Its order is not fixed.
 - `checkBreaking` runs `oasdiff breaking <reference file> <file>` for
-  each reference. A breaking change is what oasdiff reports at level
-  error, plus any removed response property that is not writeOnly:
-  removing an operation or a field (a required response property,
-  CT2-4 and CT2-5; an optional response property too, which oasdiff
-  rates below error, CT2-4 as the product owner decided), changing a
-  type, making a request field required. Adding an optional field
-  passes (CT2-6). A property with `writeOnly: true` is not a response
-  field: removing it from a schema used in a response passes (CT2-4,
-  as the product owner decided).
+  each reference, and applies the table of spec 2.10 (version 2.8),
+  "The breaking-change check", to its findings:
+
+| Change against a reference | The check |
+|----------------------------|-----------|
+| Removing an operation (CT2-4) | Fails |
+| Removing a response field or a response header, required or optional (CT2-4, CT2-5) | Fails |
+| Changing a type so that a client can no longer read or send it (widening a response type, narrowing a request type), or making a request field required | Fails |
+| Removing an operation, a field, or a header marked `deprecated` before the date in its `x-sunset`, an optional field too | Fails |
+| Removing a request field, or a `writeOnly` field (CT2-4) | Passes |
+| Removing an operation, a field, or a header marked `deprecated`, with no `x-sunset` or after its date | Passes |
+| Narrowing a response type, or widening a request type | Passes |
+| Adding an optional field (CT2-6), or adding an enum value to a response field | Passes |
+
+- A field is a response field wherever it is in the response schema:
+  nested, in the items of an array (the response itself an array too),
+  inside `allOf`, `oneOf`, or `anyOf`, in a `$ref`'d component, or under
+  `responses.default`. The same holds for `deprecated`: a field is
+  marked deprecated when its schema has `deprecated: true`, also when
+  that schema is a `$ref` with `deprecated: true` beside it (OpenAPI
+  3.1), and a name with `/` in it (`home/city`) is one field.
+- `x-sunset` is a date `YYYY-MM-DD` on the deprecated operation,
+  field schema, or header; the tests use `2099-12-31` as a date to come
+  and `2020-01-01` as a date gone.
+- A header is a response header of a response's `headers`; one marked
+  deprecated has `deprecated: true` on the header object.
 - `ok` is `true` and `problems` empty when nothing breaks against any
   reference, and when `references` is empty (no tag yet).
 - Each problem's `tag` is the reference it breaks; its `message` names
-  what broke, for example the removed property's name.
+  what broke: the removed property's name, the removed header's name
+  (`X-Total-Count`), or the removed operation's path (`/old`).
 - The oasdiff binary is the path in the environment variable
   `OASDIFF` when set, otherwise `oasdiff` on `PATH`. The tests do not
   install it; they need it to pass.
