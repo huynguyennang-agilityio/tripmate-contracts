@@ -1,6 +1,10 @@
-// The breaking-change check (EPIC-11 spec, section 2.10): `oasdiff breaking` of the new
-// openapi.json against the last release tag and the latest draft newer than it. Only findings
-// at level error count; a warning or an info does not fail the check. No tag yet: it passes.
+// The breaking-change check (EPIC-11 spec, section 2.10, table "The breaking-change check"):
+// `oasdiff breaking` of the new openapi.json against the last release tag and the latest draft
+// newer than it, with the spec's rules on top of oasdiff's: oasdiff's error findings fail it, so
+// do a removed optional response property or header, and a removal of something marked
+// `deprecated` before its `x-sunset` date; an added enum value in a response is ignored, and so
+// is a removal of something deprecated whose `x-sunset` is absent, today, or past. A warning or
+// an info finding fails only where this file says so. No tag yet: it passes.
 //
 //   node scripts/check-breaking.js [file]    # file defaults to openapi.json
 //
@@ -53,13 +57,17 @@ function runOasdiff(command, reference, file) {
   return { findings };
 }
 
-// Removing an optional response property breaks a client that reads it, although oasdiff rates
-// it info (product owner's decision). Not matched on purpose: the `write-only` ids (a writeOnly
-// property is no response field), the `-with-deprecation` ids (a removal after deprecation is the
-// removal path of api-design.md, section 6), and every other `response-...-property-removed` id.
-// A required property removal is an error for oasdiff already. A removed optional property that the
-// reference marks `deprecated: true` passes, as oasdiff does for a required one.
+// Removing an optional response property or header breaks a client that reads it, although
+// oasdiff rates it info (product owner's decision). Not matched on purpose: the `write-only` ids (a
+// writeOnly property is no response field) and every other `response-...-property-removed` id.
 const REMOVED_OPTIONAL_RESPONSE_PROPERTY = "response-optional-property-removed";
+const REMOVED_RESPONSE_HEADER = new Set(["optional-response-header-removed", "required-response-header-removed"]);
+// A removed required property or path is reported by oasdiff as `...-removed-before-sunset` (an
+// error) or `...-with-deprecation` (info) already; these ids are not touched here.
+
+// An added enum value in a response is not breaking (every client shows an unknown value as a
+// neutral fallback), although oasdiff rates it an error.
+const IGNORED_IDS = new Set(["response-property-enum-value-added", "response-mediatype-enum-value-added"]);
 
 function resolveRef(doc, node) {
   let current = node;
@@ -70,23 +78,68 @@ function resolveRef(doc, node) {
   return current;
 }
 
+// A removal is allowed when the node is marked `deprecated: true` and its `x-sunset` (YYYY-MM-DD) is
+// absent, today, or past. A `$ref` node is read before the ref is resolved (OpenAPI 3.1 allows
+// `deprecated` beside `$ref`), then the target. An unreadable date is not past.
+function removalAllowed(doc, node, today = new Date().toISOString().slice(0, 10)) {
+  const own = node && typeof node === "object" ? node : {};
+  const target = resolveRef(doc, node) ?? {};
+  const deprecated = own.deprecated === true || target.deprecated === true;
+  if (!deprecated) return false;
+  const sunset = own["x-sunset"] ?? target["x-sunset"];
+  if (sunset === undefined || sunset === null) return true;
+  return typeof sunset === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sunset) && sunset <= today;
+}
+
+// The schema nodes that `path` (oasdiff's name of a property: segments joined by `/`, with `items`,
+// `allOf[subschema #N]`, `oneOf[...]`, `anyOf[...]`; a property name may contain `/` itself) can
+// name below `schema`. A node is returned as written (a `$ref` node is not resolved).
+function schemaNodes(doc, schema, path, depth = 0) {
+  if (path === "") return [schema];
+  const resolved = resolveRef(doc, schema);
+  if (!resolved || typeof resolved !== "object" || depth > 50) return [];
+  const found = [];
+  const step = (prefix, next) => {
+    if (next !== undefined && path.startsWith(prefix)) found.push(...schemaNodes(doc, next, path.slice(prefix.length), depth + 1));
+  };
+  step("items/", resolved.items);
+  for (const kind of ["allOf", "oneOf", "anyOf"]) {
+    (resolved[kind] ?? []).forEach?.((sub, i) => step(`${kind}[subschema #${i + 1}]/`, sub));
+  }
+  for (const [name, property] of Object.entries(resolved.properties ?? {})) {
+    if (path === name) found.push(property);
+    else step(`${name}/`, property);
+  }
+  return found;
+}
+
+function operationOf(doc, finding) {
+  return doc?.paths?.[finding.path]?.[String(finding.operation ?? "").toLowerCase()];
+}
+
 // True when the property that `finding` says was removed is marked deprecated in `doc` (the
-// reference document). Anything that cannot be found there is not deprecated.
-function wasDeprecated(doc, finding) {
+// reference document), and its x-sunset allows the removal. Anything that cannot be found is not
+// deprecated.
+function propertyRemovalAllowed(doc, finding) {
   const named = /property `([^`]+)`.*response with the `([^`]+)` status/.exec(finding.text ?? "");
-  const item = doc?.paths?.[finding.path];
-  const operation = item?.[String(finding.operation ?? "").toLowerCase()];
+  const operation = operationOf(doc, finding);
   if (!named || !operation) return false;
   const response = resolveRef(doc, operation.responses?.[named[2]]);
   for (const media of Object.values(response?.content ?? {})) {
-    let schema = resolveRef(doc, media?.schema);
-    for (const key of named[1].split("/")) {
-      schema = resolveRef(doc, schema?.properties?.[key]);
-      if (!schema) break;
-    }
-    if (schema?.deprecated === true) return true;
+    if (schemaNodes(doc, media?.schema, named[1]).some((node) => removalAllowed(doc, node))) return true;
   }
   return false;
+}
+
+// The removed header of `finding`: { name (as the reference writes it), allowed }. oasdiff
+// lowercases the name; header names are case-insensitive.
+function removedHeader(doc, finding) {
+  const named = /header `([^`]+)` removed for the status `([^`]+)`/.exec(finding.text ?? "");
+  if (!named) return null;
+  const response = resolveRef(doc, operationOf(doc, finding)?.responses?.[named[2]]);
+  const original = Object.keys(response?.headers ?? {}).find((n) => n.toLowerCase() === named[1].toLowerCase());
+  if (original === undefined) return { name: named[1], allowed: false };
+  return { name: original, allowed: removalAllowed(doc, response.headers[original]) };
 }
 
 function compare(reference, file) {
@@ -105,9 +158,18 @@ function compare(reference, file) {
   const seen = new Set();
   const problems = [];
   for (const f of [...breaking.findings, ...changelog.findings]) {
-    const optionalRemoved = f.id === REMOVED_OPTIONAL_RESPONSE_PROPERTY && !wasDeprecated(referenceDoc, f);
-    if (!ERROR_LEVELS.has(f.level) && !optionalRemoved) continue;
-    const message = [f.text, f.operation && f.path ? `(${f.operation} ${f.path})` : f.path ? `(${f.path})` : ""].filter(Boolean).join(" ");
+    if (IGNORED_IDS.has(f.id)) continue;
+    let text = f.text;
+    if (f.id === REMOVED_OPTIONAL_RESPONSE_PROPERTY) {
+      if (propertyRemovalAllowed(referenceDoc, f)) continue;
+    } else if (REMOVED_RESPONSE_HEADER.has(f.id)) {
+      const header = removedHeader(referenceDoc, f);
+      if (header?.allowed) continue;
+      if (header) text = text.replace(`\`${header.name.toLowerCase()}\``, `\`${header.name}\``);
+    } else if (!ERROR_LEVELS.has(f.level)) {
+      continue;
+    }
+    const message = [text, f.operation && f.path ? `(${f.operation} ${f.path})` : f.path ? `(${f.path})` : ""].filter(Boolean).join(" ");
     if (seen.has(message)) continue;
     seen.add(message);
     problems.push({ tag: reference.tag, message });

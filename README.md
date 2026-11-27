@@ -30,6 +30,15 @@ node scripts/check-breaking.js            # oasdiff against the last release tag
 node scripts/contract-version.js          # the tag the next merge to main gets (prints it; creates none)
 ```
 
+## Breaking-change rules
+
+`node scripts/check-breaking.js` fails when a response field or header, or
+an operation, is removed (a `writeOnly` field and request fields excepted),
+unless it is marked `deprecated` and its `x-sunset` date is absent, today,
+or past; it fails too on a type change a client can no longer handle. Adding
+an optional field or an enum value to a response passes. The full table is
+in the EPIC-11 spec, section 2.10, and CLAUDE.md.
+
 ## Translation rules
 
 One flat JSON object of strings per area and language; every key starts

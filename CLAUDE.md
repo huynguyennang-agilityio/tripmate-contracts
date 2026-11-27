@@ -64,8 +64,8 @@ problem printed otherwise. `npm test` needs oasdiff for the CT2 tests: set
 ## CI
 
 `.github/workflows/ci.yml` runs on every pull request to `main` and on
-every push to `main`. Each job is a check required on `main`; the check's
-name is the job's name:
+every push to `main`. The jobs `translations` and `breaking-change` are checks required on
+`main`; a check's name is its job's name:
 
 | Job | Runs |
 |-----|------|
@@ -81,7 +81,10 @@ The contract pipeline is in the EPIC-11 spec,
 - A draft is the next minor version and keeps its number, with `N` +1 on each merge, until its release.
 - A release that adds an operation, a field, or an enum value, or changes `events.schema.json`, is the next minor version; any other change is the next patch version.
 - Only a merge that changes `openapi.json`, `events.schema.json`, or a file under `translations/` is tagged. The changed files are those since the last tag, or those of the merge itself (its first parent) when there is no tag yet, so the first tag comes with the first `openapi.json` change. A run for a commit the last tag already contains tags nothing.
-- The breaking-change check runs `oasdiff breaking` against the last release tag and the latest draft newer than it; error-level findings fail it, and so does a removed optional response property; not a `writeOnly` one, a removed request field, or anything already marked `deprecated`. With no tag yet it passes. Nothing checks `events.schema.json`.
+- The breaking-change check runs `oasdiff breaking` against the last release tag and the latest draft newer than it (spec 2.8, table "The breaking-change check"). With no tag yet it passes. Nothing checks `events.schema.json`.
+  - Fails: removing an operation, a response field (required or optional; not a `writeOnly` one), or a response header; a type change a client can no longer read or send; a request field made required; removing an operation, field, or header marked `deprecated` before the date in its `x-sunset`, an optional field too.
+  - Passes: removing a request field or a `writeOnly` field; removing an operation, field, or header marked `deprecated` with no `x-sunset` or one that is today or past (`YYYY-MM-DD`, UTC); narrowing a response type or widening a request type; adding an optional field; adding an enum value to a response property.
+  - The check adds to oasdiff: the removed optional property or header (rated info), the `x-sunset` rule for them, and ignoring `response-property-enum-value-added` and `response-mediatype-enum-value-added`. The `deprecated` lookup follows oasdiff's property paths (`items`, `allOf`/`oneOf`/`anyOf` `[subschema #N]`, a `$ref` with `deprecated` beside it, a name containing `/`).
 - oasdiff is pinned by version and SHA-256 in `scripts/install-oasdiff.sh`; every job that needs it runs that script.
 
 Third-party actions are pinned to a full commit SHA with the version in a

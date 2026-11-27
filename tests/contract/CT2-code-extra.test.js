@@ -136,3 +136,31 @@ test("a removed optional response property fails unless it was deprecated; a wri
   };
   expect((await checkBreaking(writeJson(dir, "new-request.json", request(false)), references(request(true)))).ok).toBe(true);
 });
+
+test("a removed header or property of a deprecated shape follows its x-sunset; a required header too; a / in a name is tried both ways", async () => {
+  const { checkBreaking } = await load("check-breaking.js");
+  const withHeaders = (headers) => {
+    const c = makeContract();
+    c.paths["/health"].get.responses[200].headers = headers;
+    return c;
+  };
+  const run = async (before, after) => {
+    const dir = makeTempDir("ct2-extra-");
+    return checkBreaking(writeJson(dir, "new.json", after), [{ tag: "contracts-v0.1.0", file: writeJson(dir, "old.json", before) }]);
+  };
+  const header = (fields) => ({ "X-Count": { schema: { type: "integer" }, ...fields } });
+  expect((await run(withHeaders(header({ required: true })), makeContract())).ok).toBe(false);
+  expect((await run(withHeaders(header({ required: true, deprecated: true })), makeContract())).ok).toBe(true);
+  expect((await run(withHeaders(header({ deprecated: true, "x-sunset": "2099-12-31" })), makeContract())).ok).toBe(false);
+  expect((await run(withHeaders(header({ deprecated: true, "x-sunset": "2020-01-01" })), makeContract())).ok).toBe(true);
+
+  const nested = (deprecated) => {
+    const c = makeContract();
+    c.components.schemas.Health.properties.home = { type: "object", properties: { city: { type: "string", deprecated } } };
+    return c;
+  };
+  const without = makeContract();
+  without.components.schemas.Health.properties.home = { type: "object", properties: {} };
+  expect((await run(nested(true), without)).ok).toBe(true);
+  expect((await run(nested(false), without)).ok).toBe(false);
+});

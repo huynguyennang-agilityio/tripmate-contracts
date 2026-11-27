@@ -69,32 +69,47 @@ export function hasStub(contract) {
   return operations(contract).some(({ operation }) => operation["x-stub"] === true);
 }
 
+// Keys whose value is a map from names to things (a path, a response status, a media type, a
+// header, a property): the keys of that map are names, never keywords.
+const NAME_MAPS = new Set(["paths", "responses", "content", "headers", "properties", "patternProperties"]);
+
 // The operations, the fields (keys of a `properties` object), and the enum values of a
 // document, each named by where it is, so that two documents can be compared.
 function features(contract) {
   const found = new Set();
   for (const { key } of operations(contract)) found.add(`operation ${key}`);
-  const walk = (node, where, fieldNames = false) => {
+  // mode: "keywords" (the keys are schema or OpenAPI keywords), "names" (the keys are names of a
+  // name map), or "components" (the keys are the `components` groups, each a name map).
+  const walk = (node, where, mode) => {
     if (Array.isArray(node)) {
-      node.forEach((child, i) => walk(child, `${where}/${i}`));
+      node.forEach((child, i) => walk(child, `${where}/${i}`, "keywords"));
       return;
     }
     if (node === null || typeof node !== "object") return;
     for (const [key, child] of Object.entries(node)) {
-      // An example, a default, or an extension is data, not part of the contract's shape.
-      if (!fieldNames && (SKIPPED_KEYS.has(key) || key.startsWith("x-"))) continue;
       const here = `${where}/${key}`;
+      if (mode === "names") {
+        walk(child, here, "keywords");
+        continue;
+      }
+      if (mode === "components") {
+        walk(child, here, "names");
+        continue;
+      }
+      // An example, a default, a constant, or an extension is data, not part of the contract's shape.
+      if (SKIPPED_KEYS.has(key) || key.startsWith("x-")) continue;
       if (key === "properties" && child && typeof child === "object" && !Array.isArray(child)) {
         for (const field of Object.keys(child)) found.add(`field ${here}/${field}`);
       }
       if (key === "enum" && Array.isArray(child)) {
         for (const value of child) found.add(`enum ${here} ${JSON.stringify(value)}`);
       }
-      // The keys of a `properties` object are field names, not keywords: a field may be named `default`.
-      walk(child, here, key === "properties" && !fieldNames);
+      if (NAME_MAPS.has(key)) walk(child, here, "names");
+      else if (key === "components" && where === "") walk(child, here, "components");
+      else walk(child, here, "keywords");
     }
   };
-  walk(contract, "");
+  walk(contract, "", "keywords");
   return found;
 }
 

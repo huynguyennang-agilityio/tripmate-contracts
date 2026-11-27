@@ -1,5 +1,6 @@
-# Contracts CI (EPIC-11 spec, section 2.9). Each job is one required check on `main`;
-# the job `name` is the check's name, so keep the names stable.
+# Contracts CI (EPIC-11 spec, section 2.9). `translations` and `breaking-change` are required checks
+# on `main`; the job `name` is the check's name, so keep the names stable. `tag` is not a required
+# check: it runs on pushes to `main` only and tags the merge, it does not judge it.
 # `breaking-change` (pull requests) and `tag` (pushes to `main`) are the contract pipeline of
 # section 2.10, card CT2.
 name: CI
