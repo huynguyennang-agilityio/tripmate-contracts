@@ -42,9 +42,13 @@ several machines".
 |------|---------|
 | Tests of the checks | `npm test` (Vitest) |
 | Translation check | `node scripts/check-translations.js [dir]` (`dir` defaults to `translations`) |
+| Breaking-change check | `node scripts/check-breaking.js [file]` (`file` defaults to `openapi.json`; run in the git repository) |
+| Next contract tag | `node scripts/contract-version.js [--base <rev>]` (prints the tag or nothing; creates none) |
+| Install oasdiff | `scripts/install-oasdiff.sh [dir]` (Linux amd64; version and checksum are in the script) |
 
-The check exits 0 when there is no problem, and non-zero with every
-problem's key printed otherwise.
+The checks exit 0 when there is no problem, and non-zero with every
+problem printed otherwise. `npm test` needs oasdiff for the CT2 tests: set
+`OASDIFF` to its binary, or have `oasdiff` on `PATH`.
 
 ## Translations
 
@@ -60,14 +64,29 @@ problem's key printed otherwise.
 ## CI
 
 `.github/workflows/ci.yml` runs on every pull request to `main` and on
-every push to `main`. Each job is a check required on `main`; the check's
-name is the job's name:
+every push to `main`. The jobs `translations` and `breaking-change` are checks required on
+`main`; a check's name is its job's name:
 
 | Job | Runs |
 |-----|------|
-| `translations` | `npm ci`, `npm test`, and `node scripts/check-translations.js` |
+| `translations` | `npm ci`, installs oasdiff (the tests need it), `npm test`, and `node scripts/check-translations.js` |
+| `breaking-change` | Pull requests only: installs oasdiff and runs `node scripts/check-breaking.js` |
 
-The breaking-change check against the last tag (card CT2) joins this file.
+Pushes to `main` also run the job `tag` (not required): it tags the merge
+with `scripts/contract-version.js`, the only job with `contents: write`.
+The contract pipeline is in the EPIC-11 spec,
+[section 2.10](../tripmate-docs/docs/specs/epic-11/spec.md):
+
+- A tag is `contracts-vX.Y.Z-draft.N` when any operation has `x-stub: true`, otherwise `contracts-vX.Y.Z`; the first tag is `0.1.0`.
+- A draft is the next minor version and keeps its number, with `N` +1 on each merge, until its release.
+- A release that adds an operation (in `paths`, in `webhooks`, or in a callback, even with no fields), a field, or an enum value, or changes `events.schema.json`, is the next minor version; any other change is the next patch version.
+- Only a merge that changes `openapi.json`, `events.schema.json`, or a file under `translations/` is tagged. The changed files are those since the last tag, or those of the merge itself (its first parent) when there is no tag yet, so the first tag comes with the first `openapi.json` change. A run for a commit the last tag already contains tags nothing.
+- The breaking-change check runs `oasdiff breaking` against the last release tag and the latest draft newer than it (spec 2.8, table "The breaking-change check"). With no tag yet it passes. Nothing checks `events.schema.json`.
+  - Fails: removing an operation, a response field (required or optional; not a `writeOnly` one), or a response header; a type change a client can no longer read or send; a request field made required; removing an operation, field, or header marked `deprecated` before the date in its `x-sunset`, an optional field too.
+  - Passes: removing a request field or a `writeOnly` field; removing an operation, field, or header marked `deprecated` with no `x-sunset` or one that is today or past (an RFC 3339 date `YYYY-MM-DD` or date-time, lowercase `t`/`z` included, compared by the UTC date of its instant with today's UTC date, for every kind of removal; an invalid or malformed date, a leap second `:60`, or an offset such as `+24:00` counts as not reached, so the removal fails); narrowing a response type or widening a request type; adding an optional field; adding an enum value to a response property.
+  - The check adds to oasdiff: the removed optional property or header (rated info), the `x-sunset` rule for them, the same date rule for oasdiff's own sunset findings (`*-removed-before-sunset`, `*-sunset-parse`, `*-removed-with-deprecation`, required fields and headers): the `x-sunset` values of both documents are re-rated by the check's rule, in temporary copies, before oasdiff reads them, so an item that did not change never fails because of its `x-sunset`; and ignoring `response-property-enum-value-added` and `response-mediatype-enum-value-added`. The `deprecated` lookup follows oasdiff's property paths (`items`, `allOf`/`oneOf`/`anyOf` `[subschema #N]`, a `$ref` with `deprecated` beside it, a name containing `/`).
+- oasdiff is pinned by version and SHA-256 in `scripts/install-oasdiff.sh`; every job that needs it runs that script.
+
 Third-party actions are pinned to a full commit SHA with the version in a
 comment.
 
@@ -83,10 +102,14 @@ The checks required on `main` are `flow / failing-first`,
 here (no rule files) and `flow / risk-gate` is always skipped; never
 require them.
 
-- The flow checks come from the backend's `flowchecks` package. Today
-  `failing-first` reads only Python test files, so in this repository the
-  test agent's failing run in the pull request is the evidence until that
-  check reads JavaScript tests.
+- The flow checks come from the backend's `flowchecks` package.
+  `failing-first` reads JavaScript tests (F15): `flow.yml` sets
+  `node-version: "24"`, `test-file-pattern: tests/**/*.test.js`, and a
+  `no-test-pattern` for Vitest's `No test found in suite` and `No test suite
+  found in file` errors, and runs `npx --yes vitest@5.1.1 run <test file>` (the
+  worktree has no `node_modules`; keep the version in step with `package.json`
+  until backend card F16 runs the caller's setup there) for each new test file
+  at its test commit; it must fail. The `setup-command` also installs oasdiff.
 - `test-lock`: a commit without the trailer `Agent: test` must not change,
   skip, or delete a test of a test commit. For JavaScript the lock covers each
   test file as a whole: any change to it by a commit without the trailer breaks it.
