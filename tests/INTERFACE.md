@@ -156,11 +156,14 @@ checkBreaking(file, references)
 - `referenceTags` is pure. Its order is not fixed.
 - `checkBreaking` runs `oasdiff breaking <reference file> <file>` for
   each reference. A breaking change is what oasdiff reports at level
-  error, plus any removed response property: removing an operation or
-  a field (a required response property, CT2-4 and CT2-5; an optional
-  response property too, which oasdiff rates below error, CT2-4 as the
-  product owner decided), changing a type, making a request field
-  required. Adding an optional field passes (CT2-6).
+  error, plus any removed response property that is not writeOnly:
+  removing an operation or a field (a required response property,
+  CT2-4 and CT2-5; an optional response property too, which oasdiff
+  rates below error, CT2-4 as the product owner decided), changing a
+  type, making a request field required. Adding an optional field
+  passes (CT2-6). A property with `writeOnly: true` is not a response
+  field: removing it from a schema used in a response passes (CT2-4,
+  as the product owner decided).
 - `ok` is `true` and `problems` empty when nothing breaks against any
   reference, and when `references` is empty (no tag yet).
 - Each problem's `tag` is the reference it breaks; its `message` names
