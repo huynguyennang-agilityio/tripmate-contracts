@@ -56,12 +56,12 @@ function makeRepo() {
   return { git, commit, run };
 }
 
-test("with no tag yet, only the merge itself counts (its first parent is the base); a root commit counts whole", () => {
+test("with no tag yet, every file at HEAD counts (the empty tree is the base)", () => {
   const { git, commit, run } = makeRepo();
   commit("openapi.json", makeContract(), "root");
-  expect(run().stdout.trim()).toBe("contracts-v0.1.0"); // a root commit: the empty tree is the base
+  expect(run().stdout.trim()).toBe("contracts-v0.1.0");
   commit("notes.json", {}, "CI, scripts, docs only");
-  expect(run().stdout.trim()).toBe(""); // openapi.json is older than the merge: no tag
+  expect(run().stdout.trim()).toBe("contracts-v0.1.0"); // openapi.json is older than the merge: still the first tag (spec 2.10, 3.1)
   commit("openapi.json", makeContract({ extraPath: "/trips" }), "the next openapi.json");
   expect(run().stdout.trim()).toBe("contracts-v0.1.0");
   expect(git("tag", "--list")).toBe("");
