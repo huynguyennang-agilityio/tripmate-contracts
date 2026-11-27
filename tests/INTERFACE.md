@@ -6,6 +6,10 @@ What the tests need from the code, and nothing more, card by card:
   spec, section 2.9, api-design.md, section 6, architecture.md,
   section 7, and the task's scope, version 1.2 (cases CT1-1 to CT1-4),
   in the sections whose names start with "CT1".
+- CT2 Draft and release tags: from the EPIC-11 spec, section 2.10
+  (version 2.5), api-design.md, section 6, and the task's scope,
+  version 1.3 (cases CT2-1 to CT2-8), in the sections whose names
+  start with "CT2".
 
 ## Running the tests
 
@@ -87,3 +91,91 @@ node scripts/check-translations.js [dir]   # dir defaults to translations, from 
 - `.github/workflows/ci.yml` has a job `translations` whose steps run
   `npm test` and `node scripts/check-translations.js` (CT1-1, read as
   text).
+
+## CT2 Tags
+
+- A release tag is `contracts-vX.Y.Z`; a draft tag is
+  `contracts-vX.Y.Z-draft.N`, `N` from 1.
+- Tags are ordered by version: `X.Y.Z-draft.N` comes before
+  `X.Y.Z-draft.N+1`, and every draft of `X.Y.Z` before the release
+  `X.Y.Z`. The order of a list of tag names carries no meaning (`git
+  tag` lists them alphabetically). The last tag is the highest; the last
+  release tag is the highest release; the latest draft is the highest
+  draft.
+- A tag name that does not start with `contracts-v` is ignored.
+- An operation is a stub when it has `x-stub: true` (an operation is a
+  method `get`, `put`, `post`, `delete`, `options`, `head`, `patch`, or
+  `trace` under a path in `paths`).
+
+## CT2 The next tag as a module
+
+`scripts/contract-version.js` is an ES module that exports:
+
+```js
+nextTag({ tags, changedPaths, contract, previousContract })
+// returns the next tag name, for example "contracts-v0.1.0-draft.1", or null for no tag
+```
+
+- `tags`: the names of the existing tags, in any order (may be empty).
+- `changedPaths`: the paths the merge changed, relative to the
+  repository root with `/`, for example `translations/en/auth.json`.
+- `contract`: the parsed `openapi.json` after the merge.
+- `previousContract`: the parsed `openapi.json` at the last tag, or
+  `null` when there is no tag.
+- Pure: no git, no file read, no network.
+
+The result, from the table in spec 2.10:
+
+| Case | Last tag | The merge | Result |
+|------|----------|-----------|--------|
+| CT2-8 | Any | Changes none of `openapi.json`, `events.schema.json`, a file under `translations/` (for example only `README.md` or `tasks/EPIC-11.md`) | `null` |
+| CT2-1 | None | Any operation is a stub | `contracts-v0.1.0-draft.1` |
+| CT2-3 | None | No stub | `contracts-v0.1.0` |
+| CT2-1 | Release `X.Y.Z` | Any operation is a stub | `contracts-vX.(Y+1).0-draft.1` (`v1.3.0` to `v1.4.0-draft.1`) |
+| CT2-3 | Release `X.Y.Z` | No stub; `contract` adds an operation, a field, or an enum value to `previousContract`, or `changedPaths` has `events.schema.json` | `contracts-vX.(Y+1).0` |
+| CT2-7 | Release `X.Y.Z` | No stub; any other change, such as translations only | `contracts-vX.Y.(Z+1)` (`v0.1.0` to `v0.1.1`) |
+| CT2-2 | Draft `X.Y.Z-draft.N` | Any operation is a stub | `contracts-vX.Y.Z-draft.(N+1)` |
+| CT2-3 | Draft `X.Y.Z-draft.N` | No stub | `contracts-vX.Y.Z` |
+
+## CT2 The breaking-change check as a module
+
+`scripts/check-breaking.js` is an ES module that exports:
+
+```js
+referenceTags(tags)
+// returns the tag names to compare with: the last release tag, and the latest
+// draft when it is newer than that release; [] when there is no tag
+
+checkBreaking(file, references)
+// file: path of the new openapi.json
+// references: [{ tag, file }], the openapi.json at each reference tag (may be empty)
+// returns { ok, problems } or a Promise of it
+// problems: [{ tag, message }]
+```
+
+- `referenceTags` is pure. Its order is not fixed.
+- `checkBreaking` runs `oasdiff breaking <reference file> <file>` for
+  each reference. A breaking change is what oasdiff reports at level
+  error: removing an operation or a field (a required response
+  property, CT2-4 and CT2-5), changing a type, making a request field
+  required. Adding an optional field passes (CT2-6).
+- `ok` is `true` and `problems` empty when nothing breaks against any
+  reference, and when `references` is empty (no tag yet).
+- Each problem's `tag` is the reference it breaks; its `message` names
+  what broke, for example the removed property's name.
+- The oasdiff binary is the path in the environment variable
+  `OASDIFF` when set, otherwise `oasdiff` on `PATH`. The tests do not
+  install it; they need it to pass.
+
+## CT2 The breaking-change check as a command
+
+```sh
+node scripts/check-breaking.js [file]   # file defaults to openapi.json, from the working directory
+```
+
+- Run in a git repository (the working directory). It reads the tags
+  of that repository, picks them with `referenceTags`, and compares
+  `file` with `openapi.json` at each picked tag.
+- Exit code 0 when nothing breaks (and with no tag); non-zero
+  otherwise, with each problem's tag and message printed to standard
+  output or standard error (CT2-4).
