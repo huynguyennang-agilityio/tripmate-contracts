@@ -8,7 +8,7 @@ What the tests need from the code, and nothing more, card by card:
   in the sections whose names start with "CT1".
 - CT2 Draft and release tags: from the EPIC-11 spec, section 2.10
   (version 2.8), api-design.md, section 6, and the task's scope,
-  version 1.3 (cases CT2-1 to CT2-8), in the sections whose names
+  version 1.4 (cases CT2-1 to CT2-9), in the sections whose names
   start with "CT2".
 
 ## Running the tests
@@ -276,3 +276,16 @@ node scripts/check-breaking.js [file]   # file defaults to openapi.json, from th
 - Exit code 0 when nothing breaks (and with no tag); non-zero
   otherwise, with each problem's tag and message printed to standard
   output or standard error (CT2-4).
+
+## CT2 The command and the first tag
+
+- `node scripts/contract-version.js`, run with the repository as its
+  working directory, prints the next tag and a newline, or prints
+  nothing when the merge gets no tag; it exits 0 either way and creates
+  no tag.
+- With no contract tag yet, the paths that count are every file in the
+  repository at HEAD, not only those the merge changed (CT2-9, spec
+  2.10 version 3.1). So a merge that changes only a script or a task
+  file, in a repository whose `openapi.json` came with an older merge,
+  gets `contracts-v0.1.0` (or `contracts-v0.1.0-draft.1` when an
+  operation is a stub).
