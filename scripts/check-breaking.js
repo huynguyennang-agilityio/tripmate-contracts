@@ -38,15 +38,19 @@ function oasdiffBinary() {
   return process.env.OASDIFF || "oasdiff";
 }
 
-function runOasdiff(command, reference, file) {
+// `reference` and `current` are { file (what oasdiff reads), name (what a message calls it) }.
+function runOasdiff(command, tag, reference, current) {
   const run = spawnSync(
     oasdiffBinary(),
-    [command, path.resolve(reference.file), path.resolve(file), "--format", "json", "--allow-external-refs=false"],
+    [command, path.resolve(reference.file), path.resolve(current.file), "--format", "json", "--allow-external-refs=false"],
     // TZ=UTC: oasdiff compares `x-sunset` with today's date in the process's time zone; the
     // check's "today" is always the UTC date.
     { encoding: "utf8", maxBuffer: 256 * 1024 * 1024, env: { ...process.env, TZ: "UTC" } },
   );
-  const fail = (message) => ({ error: { tag: reference.tag, message } });
+  // oasdiff may read temp copies; a message names the document, not the copy.
+  const named = (text) =>
+    [reference, current].reduce((t, doc) => t.split(path.resolve(doc.file)).join(doc.name), text);
+  const fail = (message) => ({ error: { tag, message: named(message) } });
   if (run.error) return fail(`cannot run oasdiff (${oasdiffBinary()}): ${run.error.message}`);
   if (run.status !== 0) return fail(`oasdiff exited with ${run.status}: ${(run.stderr || run.stdout).trim()}`);
   let findings;
@@ -194,9 +198,11 @@ function removedHeader(doc, finding) {
   return { name: original, allowed: removalAllowed(doc, response.headers[original]) };
 }
 
-// A copy of the reference document where every string `x-sunset` is re-rated by `sunsetUtcDate`
-// before oasdiff reads it: a valid value becomes its UTC date `YYYY-MM-DD`, an invalid one (also
-// a leap second or the offset +24:00, which oasdiff accepts) becomes a value oasdiff refuses. So
+// A copy of a document (the reference and the new one alike, so that an item that did not change
+// compares equal) where every `x-sunset` is re-rated by `sunsetUtcDate` before oasdiff reads it: a
+// valid value becomes its UTC date `YYYY-MM-DD`, an invalid one (also a leap second or the offset
+// +24:00, which oasdiff accepts, and a non-string value, which is rewritten too) becomes a value
+// oasdiff refuses; a null `x-sunset` is dropped. So
 // oasdiff's own sunset findings (`*-removed-before-sunset`, `*-sunset-parse`,
 // `*-removed-with-deprecation`, the required-property ones) follow the check's date rule, also the
 // removals it passes in silence. A property named `x-sunset` holds an object and is left alone.
@@ -215,31 +221,36 @@ function normalizeSunsets(node) {
   return copy;
 }
 
-function compare(reference, file) {
-  let rated = reference;
-  let ratedDir = null;
+// A copy of `file` with its x-sunset values re-rated, in `dir`; the file itself when it is not JSON
+// (oasdiff reports that).
+function ratedCopy(file, dir, name) {
   try {
-    const text = JSON.parse(readFileSync(reference.file, "utf8"));
-    ratedDir = mkdtempSync(path.join(tmpdir(), "check-breaking-rated-"));
-    const copy = path.join(ratedDir, "reference.json");
-    writeFileSync(copy, JSON.stringify(normalizeSunsets(text)));
-    rated = { ...reference, file: copy };
+    const doc = JSON.parse(readFileSync(file, "utf8"));
+    const copy = path.join(dir, name);
+    writeFileSync(copy, JSON.stringify(normalizeSunsets(doc)));
+    return copy;
   } catch {
-    // Not JSON: oasdiff reports it.
-  }
-  try {
-    return compareRated(reference, rated, file);
-  } finally {
-    if (ratedDir) rmSync(ratedDir, { recursive: true, force: true });
+    return file;
   }
 }
 
-function compareRated(reference, rated, file) {
+function compare(reference, file) {
+  const dir = mkdtempSync(path.join(tmpdir(), "check-breaking-rated-"));
+  try {
+    const rated = { file: ratedCopy(reference.file, dir, "reference.json"), name: `openapi.json at ${reference.tag}` };
+    const current = { file: ratedCopy(file, dir, "new.json"), name: file };
+    return compareRated(reference, file, rated, current);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function compareRated(reference, file, rated, current) {
   // `breaking` lists the error and warning findings; `changelog` also lists the info ones, where
   // the removal of an optional response property is.
-  const breaking = runOasdiff("breaking", rated, file);
+  const breaking = runOasdiff("breaking", reference.tag, rated, current);
   if (breaking.error) return [breaking.error];
-  const changelog = runOasdiff("changelog", rated, file);
+  const changelog = runOasdiff("changelog", reference.tag, rated, current);
   if (changelog.error) return [changelog.error];
   let referenceDoc = null;
   try {
