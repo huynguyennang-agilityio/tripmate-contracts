@@ -12,6 +12,7 @@ event schema, and the shared translations, with the checks that guard them
 | `events.schema.json` | Realtime messages and events (JSON Schema 2020-12) | The backend change that adds an event |
 | `translations/en/<area>.json`, `translations/vi/<area>.json` | Interface texts in ICU message format | Anyone |
 | `scripts/check-translations.js` | The translation check | This repository |
+| `scripts/check-breaking.js`, `scripts/contract-version.js`, `scripts/install-oasdiff.sh` | The breaking-change check, the next contract tag, and the oasdiff install | This repository |
 | `tests/` | Vitest tests of the checks | The test agent |
 | `.github/` | CI, flow checks, risk path list | This repository |
 | `.claude/agents/`, `CLAUDE.md` | Agent roles and rules | This repository |
@@ -23,9 +24,20 @@ Node 24.
 
 ```sh
 npm ci
-npm test                                  # tests of the checks
+npm test                                  # tests of the checks (needs oasdiff: set OASDIFF or put it on PATH)
 node scripts/check-translations.js        # the translation check (default dir: translations)
+node scripts/check-breaking.js            # oasdiff against the last release tag and the latest draft
+node scripts/contract-version.js          # the tag the next merge to main gets (prints it; creates none)
 ```
+
+## Breaking-change rules
+
+`node scripts/check-breaking.js` fails when a response field or header, or
+an operation, is removed (a `writeOnly` field and request fields excepted),
+unless it is marked `deprecated` and its `x-sunset` date is absent, today,
+or past; it fails too on a type change a client can no longer handle. Adding
+an optional field or an enum value to a response passes. The full table is
+in the EPIC-11 spec, section 2.10, and CLAUDE.md.
 
 ## Translation rules
 
