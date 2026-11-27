@@ -6,7 +6,7 @@
 //
 // Run in the git repository. The oasdiff binary is $OASDIFF, else `oasdiff` on PATH.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { lastRelease, latestDraft, parseTag } from "./contract-version.js";
@@ -53,9 +53,41 @@ function runOasdiff(command, reference, file) {
   return { findings };
 }
 
-// Removing any response property breaks a client that reads it, an optional one too, although
-// oasdiff rates the removal of an optional property below error (product owner's decision).
-const REMOVED_RESPONSE_PROPERTY = /^response-.*property-removed$/;
+// Removing an optional response property breaks a client that reads it, although oasdiff rates
+// it info (product owner's decision). Not matched on purpose: the `write-only` ids (a writeOnly
+// property is no response field), the `-with-deprecation` ids (a removal after deprecation is the
+// removal path of api-design.md, section 6), and every other `response-...-property-removed` id.
+// A required property removal is an error for oasdiff already. A removed optional property that the
+// reference marks `deprecated: true` passes, as oasdiff does for a required one.
+const REMOVED_OPTIONAL_RESPONSE_PROPERTY = "response-optional-property-removed";
+
+function resolveRef(doc, node) {
+  let current = node;
+  for (let hops = 0; current && typeof current === "object" && typeof current.$ref === "string" && hops < 20; hops++) {
+    if (!current.$ref.startsWith("#/")) return undefined;
+    current = current.$ref.slice(2).split("/").reduce((n, key) => n?.[key.replace(/~1/g, "/").replace(/~0/g, "~")], doc);
+  }
+  return current;
+}
+
+// True when the property that `finding` says was removed is marked deprecated in `doc` (the
+// reference document). Anything that cannot be found there is not deprecated.
+function wasDeprecated(doc, finding) {
+  const named = /property `([^`]+)`.*response with the `([^`]+)` status/.exec(finding.text ?? "");
+  const item = doc?.paths?.[finding.path];
+  const operation = item?.[String(finding.operation ?? "").toLowerCase()];
+  if (!named || !operation) return false;
+  const response = resolveRef(doc, operation.responses?.[named[2]]);
+  for (const media of Object.values(response?.content ?? {})) {
+    let schema = resolveRef(doc, media?.schema);
+    for (const key of named[1].split("/")) {
+      schema = resolveRef(doc, schema?.properties?.[key]);
+      if (!schema) break;
+    }
+    if (schema?.deprecated === true) return true;
+  }
+  return false;
+}
 
 function compare(reference, file) {
   // `breaking` lists the error and warning findings; `changelog` also lists the info ones, where
@@ -64,10 +96,17 @@ function compare(reference, file) {
   if (breaking.error) return [breaking.error];
   const changelog = runOasdiff("changelog", reference, file);
   if (changelog.error) return [changelog.error];
+  let referenceDoc = null;
+  try {
+    referenceDoc = JSON.parse(readFileSync(reference.file, "utf8"));
+  } catch {
+    // oasdiff read the file, so this only loses the deprecation lookup.
+  }
   const seen = new Set();
   const problems = [];
   for (const f of [...breaking.findings, ...changelog.findings]) {
-    if (!ERROR_LEVELS.has(f.level) && !REMOVED_RESPONSE_PROPERTY.test(f.id ?? "")) continue;
+    const optionalRemoved = f.id === REMOVED_OPTIONAL_RESPONSE_PROPERTY && !wasDeprecated(referenceDoc, f);
+    if (!ERROR_LEVELS.has(f.level) && !optionalRemoved) continue;
     const message = [f.text, f.operation && f.path ? `(${f.operation} ${f.path})` : f.path ? `(${f.path})` : ""].filter(Boolean).join(" ");
     if (seen.has(message)) continue;
     seen.add(message);

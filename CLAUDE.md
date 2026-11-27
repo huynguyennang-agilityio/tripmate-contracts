@@ -81,7 +81,7 @@ The contract pipeline is in the EPIC-11 spec,
 - A draft is the next minor version and keeps its number, with `N` +1 on each merge, until its release.
 - A release that adds an operation, a field, or an enum value, or changes `events.schema.json`, is the next minor version; any other change is the next patch version.
 - Only a merge that changes `openapi.json`, `events.schema.json`, or a file under `translations/` is tagged. The changed files are those since the last tag, or those of the merge itself (its first parent) when there is no tag yet, so the first tag comes with the first `openapi.json` change. A run for a commit the last tag already contains tags nothing.
-- The breaking-change check runs `oasdiff breaking` against the last release tag and the latest draft newer than it; error-level findings fail it, and so does any removed response property, an optional one too; with no tag yet it passes. Nothing checks `events.schema.json`.
+- The breaking-change check runs `oasdiff breaking` against the last release tag and the latest draft newer than it; error-level findings fail it, and so does a removed optional response property; not a `writeOnly` one, a removed request field, or anything already marked `deprecated`. With no tag yet it passes. Nothing checks `events.schema.json`.
 - oasdiff is pinned by version and SHA-256 in `scripts/install-oasdiff.sh`; every job that needs it runs that script.
 
 Third-party actions are pinned to a full commit SHA with the version in a

@@ -62,6 +62,9 @@ jobs:
     name: tag
     # Pushes to `main` only. Not a required check: it tags the merge, it does not judge it.
     if: ${{ github.event_name == 'push' }}
+    # Only a merge whose tests pass on `main` is tagged. Not `breaking-change`: it is skipped on a
+    # push, and a skipped dependency would skip this job.
+    needs: [translations]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

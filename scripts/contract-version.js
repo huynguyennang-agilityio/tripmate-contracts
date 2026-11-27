@@ -15,6 +15,8 @@ import { readFileSync } from "node:fs";
 const TAG_PREFIX = "contracts-v";
 const TAG_PATTERN = /^contracts-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-draft\.([1-9]\d*))?$/;
 const METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"];
+// Keys whose values are sample data, not schema: they hold no field or enum value of the contract.
+const SKIPPED_KEYS = new Set(["example", "examples", "default", "const"]);
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 // { major, minor, patch, draft } for a contract tag name, `draft` null for a release;
@@ -72,13 +74,15 @@ export function hasStub(contract) {
 function features(contract) {
   const found = new Set();
   for (const { key } of operations(contract)) found.add(`operation ${key}`);
-  const walk = (node, where) => {
+  const walk = (node, where, fieldNames = false) => {
     if (Array.isArray(node)) {
       node.forEach((child, i) => walk(child, `${where}/${i}`));
       return;
     }
     if (node === null || typeof node !== "object") return;
     for (const [key, child] of Object.entries(node)) {
+      // An example, a default, or an extension is data, not part of the contract's shape.
+      if (!fieldNames && (SKIPPED_KEYS.has(key) || key.startsWith("x-"))) continue;
       const here = `${where}/${key}`;
       if (key === "properties" && child && typeof child === "object" && !Array.isArray(child)) {
         for (const field of Object.keys(child)) found.add(`field ${here}/${field}`);
@@ -86,7 +90,8 @@ function features(contract) {
       if (key === "enum" && Array.isArray(child)) {
         for (const value of child) found.add(`enum ${here} ${JSON.stringify(value)}`);
       }
-      walk(child, here);
+      // The keys of a `properties` object are field names, not keywords: a field may be named `default`.
+      walk(child, here, key === "properties" && !fieldNames);
     }
   };
   walk(contract, "");

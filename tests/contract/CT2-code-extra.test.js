@@ -83,3 +83,56 @@ test("once a tag exists, changes count since the tag; HEAD inside the last tag g
     expect(run().status).toBe(0);
   }
 });
+
+test("an example, a default, a const, or an x- value does not count as a new field or enum value; a field named default does", async () => {
+  const { nextTag } = await load("contract-version.js");
+  const run = (contract, previousContract) => nextTag({ tags: ["contracts-v1.3.0"], changedPaths: ["openapi.json"], contract, previousContract });
+  const previous = makeContract();
+  const sample = { id: "1", properties: { color: "red" }, enum: ["a"] };
+  const changed = makeContract();
+  const health = changed.components.schemas.Health;
+  health.example = sample;
+  health.examples = [sample];
+  health.properties.status.default = sample;
+  health.properties.status.const = sample;
+  health["x-note"] = sample;
+  changed.paths["/me"].get.responses[200].content["application/json"].example = sample;
+  expect(run(changed, previous)).toBe("contracts-v1.3.1");
+
+  const named = makeContract();
+  named.components.schemas.Health.properties.default = { type: "string" };
+  expect(run(named, previous)).toBe("contracts-v1.4.0");
+});
+
+test("a removed optional response property fails unless it was deprecated; a writeOnly one and a removed request field pass", async () => {
+  const { checkBreaking } = await load("check-breaking.js");
+  const dir = makeTempDir("ct2-breaking-extra-");
+  const withOld = (mark) => {
+    const c = makeContract({ me: { id: { type: "string", required: true }, old: { type: "string", required: false } } });
+    Object.assign(c.components.schemas.Me.properties.old, mark);
+    return c;
+  };
+  const references = (contract) => [{ tag: "contracts-v0.1.0", file: writeJson(dir, "release.json", contract) }];
+  const file = writeJson(dir, "openapi.json", makeContract());
+
+  expect((await checkBreaking(file, references(withOld({})))).ok).toBe(false);
+  expect(await checkBreaking(file, references(withOld({ deprecated: true })))).toMatchObject({ ok: true, problems: [] });
+  expect(await checkBreaking(file, references(withOld({ deprecated: true, "x-sunset": "2020-01-01" })))).toMatchObject({ ok: true });
+
+  // A required response property that was deprecated passes too (oasdiff: removed after deprecation).
+  const required = makeContract({ me: { id: { type: "string", required: true }, old: { type: "string", required: true } } });
+  Object.assign(required.components.schemas.Me.properties.old, { deprecated: true, "x-sunset": "2020-01-01" });
+  expect((await checkBreaking(file, references(required))).ok).toBe(true);
+
+  // A removed request field passes.
+  const request = (withField) => {
+    const c = makeContract();
+    c.paths["/me"].post = {
+      operationId: "post_me",
+      requestBody: { content: { "application/json": { schema: { type: "object", properties: withField ? { note: { type: "string" } } : {} } } } },
+      responses: { 204: { description: "Done" } },
+    };
+    return c;
+  };
+  expect((await checkBreaking(writeJson(dir, "new-request.json", request(false)), references(request(true)))).ok).toBe(true);
+});
